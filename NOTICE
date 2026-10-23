@@ -1,0 +1,15 @@
+agy-observer-mcp
+Copyright 2026 agy-observer-mcp contributors.
+
+This project grew out of a local Antigravity adapter and observation UI developed
+while extending PAL MCP Server 9.8.2 (BeehiveInnovations/pal-mcp-server), upstream
+commit 7afc7c1cc96e23992c8f105f960132c657883bb1, licensed under Apache-2.0.
+Upstream: https://github.com/BeehiveInnovations/pal-mcp-server
+
+The standalone package does not bundle the PAL server, its provider integrations,
+the Antigravity CLI binary, or any authentication material. Its bounded process
+capture and public-event history were extracted from our local PAL adaptation;
+configuration, MCP tools, monitor lifecycle, packaging, and portable tests were
+rewritten for this standalone distribution. The original Apache-2.0 license is
+included. No affiliation with Google, Antigravity, OpenAI, or the PAL maintainers
+is implied.

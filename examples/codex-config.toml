@@ -1,0 +1,14 @@
+# Review and replace paths before adding to a trusted project's configuration.
+[mcp_servers.agy_observer]
+command = "/absolute/path/to/.venv/bin/python"
+args = ["-m", "agy_observer.server"]
+startup_timeout_sec = 30
+tool_timeout_sec = 50
+enabled_tools = ["agy_info", "agy_history", "agy_status", "agy_run", "agy_cancel"]
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.agy_observer.env]
+AGY_OBSERVER_ENABLED = "0"
+AGY_OBSERVER_CLI = "/absolute/path/to/agy"
+AGY_OBSERVER_WORKSPACE = "/absolute/path/to/empty-workspace"
+AGY_OBSERVER_STATE_DIR = "/absolute/path/to/private-state"
