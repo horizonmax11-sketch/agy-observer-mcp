@@ -31,20 +31,20 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
  header{padding:10px 16px;gap:8px;flex-wrap:wrap}header small{font-size:12px}article{padding:12px 16px}
 }
 </style>
-<header><h1>AGY Observer</h1><small>本地只读对话记录</small><small id="connection">正在连接…</small></header>
+<header><h1>AGY Observer</h1><small>本地对话记录（只读）</small><small id="connection">正在连接…</small></header>
 <main>
  <nav aria-label="调用历史">
   <div class="muted">最近 200 次调用</div>
-  <label><input id="show-tests" type="checkbox"> 显示离线测试与模拟</label>
+  <label><input id="show-tests" type="checkbox"> 显示离线测试与模拟记录</label>
   <div id="runs"></div>
  </nav>
  <article>
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
-  <h2>用户</h2><pre id="task">暂无可显示的对话。</pre>
+  <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
   <h2>助手回复</h2><pre id="response" aria-live="polite"></pre>
-  <h2>警告与错误</h2><pre id="warning"></pre>
-  <details id="details"><summary>调用信息与事件</summary><dl id="meta"></dl><pre id="events"></pre></details>
-  <p class="muted">仅显示公开事件与回复。心跳表示仍在等待，不代表模型进度。此页只读，不发送模型请求。</p>
+  <h2>警告与错误信息</h2><pre id="warning"></pre>
+  <details id="details"><summary>调用详情与事件记录</summary><dl id="meta"></dl><pre id="events"></pre></details>
+  <p class="muted">仅展示公开事件与回复。心跳表示仍在等待，不代表生成进度。本页只读，不发起模型请求。</p>
  </article>
 </main>
 <script>
@@ -58,7 +58,7 @@ const fail=error=>txt('connection','连接中断：'+error.message);
 el('show-tests').checked=new URLSearchParams(location.search).get('tests')==='1';
 async function read(path){const response=await fetch(path);if(!response.ok)throw Error(response.status);return response.json()}
 function clearDetail(){
- detailKey=null;eventKey=null;txt('state','暂无记录');txt('kind','');txt('task','暂无可显示的对话。');
+ detailKey=null;eventKey=null;txt('state','暂无记录');txt('kind','');txt('task','暂无可见的对话记录。');
  for(const id of ['response','warning','events'])txt(id,'');el('meta').replaceChildren();
 }
 async function renderEvents(key){
@@ -75,7 +75,7 @@ async function renderDetail(){
  if(key!==detailKey){
   const row=await read('/api/status/'+encodeURIComponent(id));if(id!==selected)return;
   txt('state',states[row.state]||row.state);txt('kind',kindLabel(row));
-  txt('task',row.task);txt('response',row.response||'等待公开回复…');
+  txt('task',row.task);txt('response',row.response||'正在等待公开回复…');
   txt('warning',[row.warnings,row.error,row.cleanup_error].filter(Boolean).join('\n')||'无');
   el('meta').replaceChildren();
   for(const [label,value] of [['运行',row.run_id],['请求模型',row.model_requested],['会话',row.conversation_id||'尚无'],['退出码',row.exit_code??'尚无'],['最近事件',row.last_event_utc]]){
