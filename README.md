@@ -1,45 +1,48 @@
 # AGY Observer MCP
 
-一个独立、轻量的 Antigravity CLI MCP 桥接服务：**一次调用、一份流式记录、一个可见对话窗口**。
+让 MCP 客户端调用 Antigravity CLI，并在本地窗口查看问题、公开回复和运行状态。
 
-从我们对 PAL MCP Server 的本地适配工作中整理而来，独立运行不需要完整 PAL 或其他模型提供方 SDK。来源与改动说明见 [NOTICE](NOTICE) 和 [设计说明](docs/architecture.md)。目前是 `0.1.0` 预览版本，不是 Google 或 PAL 的官方产品。
+**一次调用、一份记录、一个可见窗口。** 仅依赖 MCP Python SDK 与标准库，无需完整 PAL 或前端构建工具。当前版本 **0.2.0 Alpha**。
 
-![本地界面：仅含离线模拟内容](docs/demo.png)
+![界面预览：图中内容为离线模拟](docs/demo.png)
 
-## 能做什么
+[快速开始](#快速开始) · [连接 MCP](#连接-mcp) · [使用方式](#使用方式) · [配置参考](docs/configuration.md) · [设计说明](docs/architecture.md) · [验证范围](docs/validation.md)
 
-- MCP 发起一次 `agy` 请求，不自动重试、不自动切换模型。
-- 调用前请求打开本地可见窗口，展示用户问题、公开回复、警告和真实终态。
-- 流式处理 `init`、`step_update`、`result`，只展示公开回复；不展示内部思考内容。
-- 历史列表和对话各自滚动；离线测试/模拟默认隐藏，不与真实对话混淆。
-- 每次记录 `status.json`、`events.jsonl`、`transcript.md`，失败、取消、超时都有终态。
-- CLI 最长30秒、外层最长40秒、stdout/stderr各2MiB读取时限额。
-- 默认关闭模型执行；本地只读发现不会调用模型。
+## 主要功能
 
-## 安装
+- **看得到对话**：调用前请求打开本地窗口，流式显示公开回复、警告与真实终态。
+- **历史清晰**：左侧历史与右侧对话独立滚动；离线测试、模拟记录默认隐藏。
+- **执行可控**：默认关闭模型执行；单个活动调用，不自动重试或切换模型。
+- **记录可追踪**：每次保存状态、公开事件和 Markdown 对话记录。
+- **读取更轻**：列表只传摘要；完整对话按选中项加载，事件展开后才读取。
 
-需要 Python 3.10+，以及**另行安装、由用户自行登录**的官方 `agy` CLI。桌面IDE可执行文件不能代替CLI。项目不下载CLI、不自动登录、不读取或打包认证文件。
+页面只读，不发送模型请求。“历史”是独立调用的集合；当前不支持沿同一远端会话自动续聊、文件上传或后台队列。
 
-```sh
+## 快速开始
+
+需要 **Python 3.10+**。真实调用还需要你另行安装并登录官方 `agy` CLI；桌面 IDE 不能代替 CLI。先下载仓库源码，在项目根目录执行：
+
+**Windows PowerShell**
+
+```powershell
 python -m venv .venv
-# Linux/macOS: .venv/bin/python；Windows: .venv\Scripts\python.exe
-python -m pip install .
+.\.venv\Scripts\python.exe -m pip install .
+.\.venv\Scripts\python.exe -m agy_observer.demo --state-dir ./state --port 8766 --open
 ```
 
-请使用你创建的venv内Python执行安装，或先激活该venv。项目依赖锁定兼容范围 `mcp>=1.30,<2`，对应本次本地验证的MCP 1.x接口；不声称已经兼容2.x。
-
-## 先做零费用验证
+**Linux / macOS**
 
 ```sh
-python -m unittest discover -s tests -v
-python -m agy_observer.demo --state-dir ./state --port 8766 --open
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/python -m agy_observer.demo --state-dir ./state --port 8766 --open
 ```
 
-测试只启动本地Python测试程序和本地MCP/HTTP服务，不启动真实CLI，不访问模型服务。演示URL带 `?tests=1`，明确显示“离线模拟”，按Ctrl+C退出。只有 `agy_run` 且执行开关明确为1时才可能调用模型。
+演示仅写入合成内容，**不启动真实 CLI、不调用模型**。窗口会明确标注“离线模拟”；按 `Ctrl+C` 退出。开发验证可使用同一个虚拟环境运行 `python -m unittest discover -s tests -v`。
 
-## MCP连接
+## 连接 MCP
 
-将客户端指向venv内Python，参数为 `-m agy_observer.server`。示例见 [通用MCP JSON](examples/mcp.json) 和 [Codex TOML](examples/codex-config.toml)。配置示例中的路径需要替换为你自己的绝对路径。示例始终保持执行关闭，没有凭据字段。
+将客户端指向刚创建的虚拟环境 Python，并替换以下绝对路径。Windows 的 Python 路径为 `.venv\Scripts\python.exe`；JSON 内反斜杠需转义，或使用正斜杠。
 
 ```json
 {
@@ -58,56 +61,47 @@ python -m agy_observer.demo --state-dir ./state --port 8766 --open
 }
 ```
 
-确认用户授权、模型费用与工作目录后，操作方才能将 `AGY_OBSERVER_ENABLED` 改为 `1`。本项目不会代替客户端管理用户审批。默认模型名是 `gemini-3.8-flash-low`，只是已测试的请求标签，不代表任何账号都拥有权限、余额或相同模型目录。
+配置后重启客户端，先调用 `agy_info` 确认工具可用。确认费用、工作目录与执行授权后，将 `AGY_OBSERVER_ENABLED` 改为 `1` 并重新启动 MCP。模型请求可能产生费用及 CLI 工具副作用；客户端仍需自行管理审批。
 
-### MCP工具
+默认请求模型为 `gemini-3.8-flash-low`，是否可用取决于你的账号和 CLI。完整变量、WSL 配置及排错见 [配置参考](docs/configuration.md)。另附 [通用 JSON](examples/mcp.json) 与 [Codex TOML](examples/codex-config.toml)。
 
-| 工具 | 作用 | 是否启动模型 |
+## 使用方式
+
+| 工具 | 用途 | 启动模型 |
 | --- | --- | --- |
-| `agy_info()` | 版本、执行开关、请求模型、超时/输出限额 | 否 |
-| `agy_history(limit=20, include_tests=false)` | 当前实例存储的历史 | 否 |
-| `agy_status(run_id)` | 某次任务的实时/终态 | 否 |
-| `agy_run(prompt)` | 固定配置模型的单次请求 | 执行开关为1时，是 |
-| `agy_cancel(run_id)` | 取消本实例拥有的活动任务 | 否 |
+| `agy_info()` | 查看版本、执行开关、模型和限额 | 否 |
+| `agy_run(prompt)` | 发起一次已授权请求，返回回复与 `run_id` | 开关开启时，是 |
+| `agy_history(limit=20, include_tests=false)` | 列出历史摘要及问题预览 | 否 |
+| `agy_status(run_id)` | 获取该次完整问题、回复、警告和终态 | 否 |
+| `agy_cancel(run_id)` | 请求取消本实例拥有的活动调用 | 否 |
 
-仅允许单个活动模型调用，避免意外并发费用。当前版本不提供文件/图像上传、任意CLI参数、自动恢复会话、多轮stdin会话或HTTP执行端点。历史是逐次调用的集合；不会把不同run拼装成同一个模型会话。
+例如向 MCP 客户端发出：“请用 agy_run 解释这个函数的边界情况，只讨论，不修改文件。”调用前会请求打开窗口；结束后用返回的 `run_id` 查询详情。提示词中的“只讨论”不是强制权限隔离。
 
-### 配置变量
+每次记录位于私有状态目录：
 
-| 变量 | 默认值/含义 |
-| --- | --- |
-| `AGY_OBSERVER_ENABLED` | `0`；只有精确的`1`启用执行 |
-| `AGY_OBSERVER_CLI` | `agy`，也可以是CLI绝对路径 |
-| `AGY_OBSERVER_MODEL` | `gemini-3.8-flash-low` |
-| `AGY_OBSERVER_WORKSPACE` | 无默认；执行时必须指向现有目录，建议空目录 |
-| `AGY_OBSERVER_STATE_DIR` | Linux/macOS按XDG state路径；Windows按LOCALAPPDATA |
-| `AGY_OBSERVER_PORT` | `0`，由操作系统选择空闲loopback端口 |
-| `AGY_OBSERVER_OPEN_BROWSER` | `1`；设为`0`是明确选择无界面运行 |
-| `AGY_OBSERVER_CLI_HOME` | 可选，指向**已有**CLI登录HOME；不迁移或复制 |
-| `AGY_OBSERVER_CLI_XDG_CONFIG_HOME` 等 | 可选，CONFIG/CACHE/DATA/STATE各自指向已有CLI路径 |
+```text
+runs/<run_id>/
+  status.json     # 当前状态与完整公开问答
+  events.jsonl    # 追加的公开事件
+  transcript.md   # 结束时生成的可读记录
+```
 
-CLI子进程只继承常见系统/用户会话环境及上述明确路径，不透传API密钥类环境变量。凭据由官方CLI按照其正常机制使用，桥接服务自身不读凭据内容。
+页面中的“离线测试”（旧记录可能叫“夹具”）指测试用的预设数据或模拟进程，**不是实际模型对话**。勾选后才能查看。页面心跳只表示仍在等待，不代表模型完成百分比。
 
-## Windows与WSL
+### 从 0.1 升级
 
-CLI和本MCP最好运行在同一个操作系统环境。若CLI在WSL中，将Python包安装在该WSL用户的venv中，客户端使用 `wsl.exe -d <发行版> -u <非root用户> --exec <venv-python> -m agy_observer.server`。不要以默认root启动模型。
+`agy_history` 在 0.2 中改为返回摘要，不再包含完整 `task`、`response`、`warnings`；使用 `task_preview` 预览问题，通过 `agy_status(run_id)` 获取完整内容。已有状态文件可继续读取。
 
-WSL的窗口打开会尝试系统浏览器，再尝试Windows PowerShell的普通 `Start-Process`；不传ExecutionPolicy或权限绕过参数。浏览器访问WSL loopback依赖WSL的localhost转发。原先本地实验采用Windows托管页面；这个独立版的WSL页面转发和真实CLI尚未重新做付费验收，不能将旧实现的通过范围无限外推。如果无图形环境，可明确选择 `AGY_OBSERVER_OPEN_BROWSER=0` 并从 `agy_info` 获取URL。没有额外认证HOME隔离层。
+## 验证与边界
 
-## 已验证与未验证
+离线测试覆盖 MCP 握手、执行门禁、严格事件解析、双流限额、超时/取消、历史读取和本地只读路由。独立包还完成过 **一次真实的 MCP → WSL CLI → 模型 → MCP 回复**审阅调用；该次在本轮改进前执行，修改后的回归验证使用离线测试。具体平台与结果见 [验证记录](docs/validation.md)。
 
-提取前的本地原型曾完成直接CLI流式、PAL完整链路及自然语言对话测试，公开schema为 init/ACTIVE回复/DONE/result。该历史事实不等于独立包已经重新完成真实模型端到端验证。
+CLI 限时 30 秒，外层捕获限时 40 秒，清理另有有限等待；stdout/stderr 各限制 2 MiB。`--mode plan --sandbox` 不构成已验证的强制只读保证；进程组/进程树清理也有平台边界，详见 [安全与隐私](SECURITY.md)。
 
-独立包发布准备只做零费用测试：标准输入输出MCP握手/工具发现、禁用执行门禁、合成输出、目录遍历/Host检查、双流上限、超时和取消父子进程。测试结果见 [验证范围](docs/validation.md)，真实私有对话回执没有放进仓库。
+历史会明文保存提示和公开回复。**不要上传状态目录、登录 HOME、CLI 二进制、虚拟环境或真实对话。** 本地页面仅绑定 `127.0.0.1`，不适合公网部署。
 
-`--mode plan --sandbox` 与提示词**不是已验证的强制只读保证**。CLI仍可能具备工具能力，`agy_run`明确标记为可能产生外部副作用。只显示CLI公开事件，不承诺独立审计了所有操作；请求模型名也不构成服务端身份认证。
+## 来源与许可证
 
-Linux清理本次进程组，不能保证主动`setsid`脱离的daemon；Windows的PID树终止也不保证父进程已退出后的所有后代，尚未实现Job Object。详细边界见 [安全与隐私](SECURITY.md)。
+项目由对 PAL MCP Server 的本地适配工作整理而来，保留 [来源与改动说明](NOTICE)，采用 [Apache-2.0](LICENSE)。不是 Google、PAL 或 OpenAI 的官方产品。
 
-参考：[官方headless事件格式](https://antigravity.google/docs/cli/headless/)、[MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)。
-
-## 发布与隐私
-
-只发布源码、文档、离线测试和配置模板。**不要上传state、runs、登录HOME、CLI二进制、venv、真实对话或本地安装回执。** 历史会以明文保存用户提示与公开回复，是操作方的私有数据；`.gitignore`不是自动脱敏工具。页面只绑定127.0.0.1，不应作为公网服务运行。
-
-许可证：Apache-2.0，保留来源说明；不是PAL、Google或OpenAI的官方分发。
+参考：[Antigravity headless 事件格式](https://antigravity.google/docs/cli/headless/) · [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)。

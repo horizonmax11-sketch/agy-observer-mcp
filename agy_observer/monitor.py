@@ -50,6 +50,11 @@ class Monitor:
                             monitor.history.list(200, True), ensure_ascii=False
                         ).encode()
                         kind = "application/json; charset=utf-8"
+                    elif re.fullmatch(r"/api/status/[A-Za-z0-9_-]{1,100}", path):
+                        body = json.dumps(
+                            monitor.history.status(path.rsplit("/", 1)[-1]), ensure_ascii=False
+                        ).encode()
+                        kind = "application/json; charset=utf-8"
                     elif re.fullmatch(r"/api/events/[A-Za-z0-9_-]{1,100}", path):
                         body = json.dumps(
                             monitor.history.events(path.rsplit("/", 1)[-1]), ensure_ascii=False

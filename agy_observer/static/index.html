@@ -1,62 +1,114 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AGY Observer · 对话记录</title>
 <style>
-[hidden]{display:none!important}
-:root{font:15px/1.6 "Segoe UI","Microsoft YaHei",sans-serif;color:#d9e1ea;background:#10151c}*{box-sizing:border-box}body{margin:0}header{padding:20px 28px;border-bottom:1px solid #2a3440;display:flex;align-items:baseline;gap:24px}h1{font-size:20px;margin:0}small,.muted{color:#a6b3c3}main{display:grid;grid-template-columns:290px minmax(0,1fr);min-height:85vh}nav{padding:16px;border-right:1px solid #2a3440}button{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:inherit;padding:12px;margin-bottom:8px;border-radius:4px;font:inherit;cursor:pointer}button:hover,button[aria-current=true]{background:#202d3c;border-color:#415b76}button:focus-visible{outline:2px solid #78b9ff}article{padding:24px 32px;min-width:0;max-width:1200px}h2{font-size:16px;margin:24px 0 8px}pre{font:14px/1.65 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:16px;background:#171f29;border-radius:4px;min-height:48px}.badge{display:inline-block;background:#244669;color:#d8ecff;padding:3px 10px;border-radius:4px;margin-right:10px}#warning{color:#f6d293}dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{margin:0;overflow-wrap:anywhere}#events{max-height:340px;overflow:auto}#connection{margin-left:auto}@media(max-width:720px){main{grid-template-columns:1fr}nav{border-right:0;border-bottom:1px solid #2a3440;max-height:240px;overflow:auto}article{padding:16px}header{padding:16px;flex-wrap:wrap}}
-</style>
-<style>
-body{height:100dvh;display:flex;flex-direction:column;overflow:hidden}header{flex:none}main{flex:1;min-height:0;overflow:hidden}nav{display:flex;flex-direction:column;min-height:0;overflow:hidden}#runs{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-top:12px}article{overflow-y:auto;overscroll-behavior:contain;width:100%}label{display:block;padding:8px 0;color:#a6b3c3}input{accent-color:#78b9ff}summary{cursor:pointer;color:#a6b3c3;padding:16px 0}#response{font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:16px;line-height:1.8}#task{font-family:inherit}#kind{color:#a6b3c3}h2{margin-top:20px}
-@media(max-width:720px){main{grid-template-rows:150px minmax(0,1fr)}nav{max-height:none;padding:8px 16px}nav>.muted{display:none}label{padding:0}#runs{padding-top:4px}#runs button{padding:6px 10px;margin-bottom:4px}header{padding:10px 16px;gap:8px}header small{font-size:12px}article{padding:12px 16px}}
+:root{font:15px/1.6 "Segoe UI","Microsoft YaHei",sans-serif;color:#d9e1ea;background:#10151c}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+header{flex:none;padding:20px 28px;border-bottom:1px solid #2a3440;display:flex;align-items:baseline;gap:24px}
+h1{font-size:20px;margin:0}small,.muted{color:#a6b3c3}#connection{margin-left:auto}
+main{display:grid;grid-template-columns:290px minmax(0,1fr);flex:1;min-height:0;overflow:hidden}
+nav{padding:16px;border-right:1px solid #2a3440;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#runs{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-top:12px}
+label{display:block;padding:8px 0;color:#a6b3c3}input{accent-color:#78b9ff}
+button{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:inherit;padding:12px;margin-bottom:8px;border-radius:4px;font:inherit;cursor:pointer;white-space:pre-wrap}
+button:hover,button[aria-current=true]{background:#202d3c;border-color:#415b76}
+button:focus-visible,summary:focus-visible{outline:2px solid #78b9ff}
+article{padding:24px 32px;min-width:0;max-width:1200px;width:100%;overflow-y:auto;overscroll-behavior:contain}
+h2{font-size:16px;margin:20px 0 8px}
+pre{font:14px/1.65 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:16px;background:#171f29;border-radius:4px;min-height:48px}
+#response{font-family:inherit;font-size:16px;line-height:1.8}#task{font-family:inherit;max-height:240px;overflow:auto}
+.badge{display:inline-block;background:#244669;color:#d8ecff;padding:3px 10px;border-radius:4px;margin-right:10px}
+#kind{color:#a6b3c3}#warning{color:#f6d293}summary{cursor:pointer;color:#a6b3c3;padding:16px 0}
+dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{margin:0;overflow-wrap:anywhere}
+#events{max-height:340px;overflow:auto}
+@media(max-width:720px){
+ main{grid-template-columns:1fr;grid-template-rows:150px minmax(0,1fr)}
+ nav{padding:8px 16px;border-right:0;border-bottom:1px solid #2a3440}nav>.muted{display:none}
+ label{padding:0}#runs{padding-top:4px}#runs button{padding:6px 10px;margin-bottom:4px}
+ header{padding:10px 16px;gap:8px;flex-wrap:wrap}header small{font-size:12px}article{padding:12px 16px}
+}
 </style>
 <header><h1>AGY Observer</h1><small>本地只读对话记录</small><small id="connection">正在连接…</small></header>
-<main><nav aria-label="调用历史"><div class="muted">调用历史</div><label><input id="show-tests" type="checkbox"> 显示离线测试与模拟</label><div id="runs"></div></nav><article>
-<div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
-<h2>用户</h2><pre id="task"></pre><h2>助手回复</h2><pre id="response" aria-live="polite"></pre>
-<h2>警告与错误</h2><pre id="warning"></pre><details><summary>调用信息与事件</summary><dl id="meta"></dl><pre id="events"></pre></details>
-<p class="muted">只展示公开事件与回复。心跳表示监控仍在等待；不代表模型进度。此页不发送请求，也不提供执行或取消按钮。</p>
-</article></main>
+<main>
+ <nav aria-label="调用历史">
+  <div class="muted">最近 200 次调用</div>
+  <label><input id="show-tests" type="checkbox"> 显示离线测试与模拟</label>
+  <div id="runs"></div>
+ </nav>
+ <article>
+  <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
+  <h2>用户</h2><pre id="task">暂无可显示的对话。</pre>
+  <h2>助手回复</h2><pre id="response" aria-live="polite"></pre>
+  <h2>警告与错误</h2><pre id="warning"></pre>
+  <details id="details"><summary>调用信息与事件</summary><dl id="meta"></dl><pre id="events"></pre></details>
+  <p class="muted">仅显示公开事件与回复。心跳表示仍在等待，不代表模型进度。此页只读，不发送模型请求。</p>
+ </article>
+</main>
 <script>
-let selected=null, pinned=false, allRows=[];
+let selected=null, pinned=false, allRows=[], detailKey=null, eventKey=null;
 const buttons=new Map(), el=id=>document.getElementById(id);
+const states={created:'准备中',running:'生成中',success:'已完成',failed:'失败',timeout:'超时',cancelled:'已取消'};
+const txt=(id,value)=>{const text=String(value??'');if(el(id).textContent!==text)el(id).textContent=text};
+const kindLabel=row=>row.kind==='离线夹具'?'离线测试':row.kind;
+const isTest=row=>row.kind.includes('离线')||row.kind.includes('模拟');
+const fail=error=>txt('connection','连接中断：'+error.message);
 el('show-tests').checked=new URLSearchParams(location.search).get('tests')==='1';
-const txt=(id,value)=>{if(el(id).textContent!==String(value??''))el(id).textContent=value??''};
-const isTest=r=>r.kind.includes('离线')||r.kind.includes('模拟');
-const kindLabel=r=>r.kind==='离线夹具'?'离线测试':r.kind;
-el('show-tests').onchange=()=>{pinned=false;el('runs').scrollTop=0;updateHistory()};
-async function updateHistory(){
-    const rows=allRows.filter(r=>el('show-tests').checked||!isTest(r));
-    if(!pinned||!rows.some(r=>r.run_id===selected))selected=rows[0]?.run_id;
-    const visible=new Set(rows.map(r=>r.run_id));
-    for(const [id,b] of buttons)b.hidden=!visible.has(id);
-    for(let i=0;i<rows.length;i++){
-      const r=rows[i];let b=buttons.get(r.run_id);
-      if(!b){b=document.createElement('button');b.type='button';b.style.whiteSpace='pre-wrap';
-        b.onclick=()=>{selected=r.run_id;pinned=true;render(allRows)};
-        buttons.set(r.run_id,b);el('runs').insertBefore(b,el('runs').children[i]||null)}
-      b.hidden=false;b.textContent=`${kindLabel(r)} · ${r.state}\n${r.run_id}`;
-    }
-    await render(allRows);
+async function read(path){const response=await fetch(path);if(!response.ok)throw Error(response.status);return response.json()}
+function clearDetail(){
+ detailKey=null;eventKey=null;txt('state','暂无记录');txt('kind','');txt('task','暂无可显示的对话。');
+ for(const id of ['response','warning','events'])txt(id,'');el('meta').replaceChildren();
 }
-async function refresh(){
-  try{
-    const res=await fetch('/api/runs'); if(!res.ok)throw Error(res.status);
-    allRows=await res.json();await updateHistory();
-    txt('connection','已连接 · '+new Date().toLocaleTimeString('zh-CN'));
-  }catch(e){txt('connection','连接中断：'+e.message)}
-  finally{setTimeout(refresh,750)}
+async function renderEvents(key){
+ if(!selected||!el('details').open||eventKey===key)return;
+ const id=selected, rows=await read('/api/events/'+encodeURIComponent(id));
+ if(id!==selected)return;
+ txt('events',rows.map(row=>JSON.stringify(row)).join('\n'));eventKey=key;
 }
-async function render(rows){
-  for(const [id,b] of buttons)b.setAttribute('aria-current',id===selected);
-  const r=rows.find(r=>r.run_id===selected); if(!r)return;
-  txt('state',r.state);txt('kind',kindLabel(r));el('meta').replaceChildren();
-  for(const [k,v] of [['运行',r.run_id],['请求模型',r.model_requested],['会话',r.conversation_id||'尚无'],['退出码',r.exit_code??'尚无'],['最近事件',r.last_event_utc]]){
-    let dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=v;el('meta').append(dt,dd);
+async function renderDetail(){
+ for(const [id,button] of buttons)button.setAttribute('aria-current',id===selected);
+ const summary=allRows.find(row=>row.run_id===selected);
+ if(!summary){clearDetail();return}
+ const id=selected,key=id+':'+summary.last_event_utc;
+ if(key!==detailKey){
+  const row=await read('/api/status/'+encodeURIComponent(id));if(id!==selected)return;
+  txt('state',states[row.state]||row.state);txt('kind',kindLabel(row));
+  txt('task',row.task);txt('response',row.response||'等待公开回复…');
+  txt('warning',[row.warnings,row.error,row.cleanup_error].filter(Boolean).join('\n')||'无');
+  el('meta').replaceChildren();
+  for(const [label,value] of [['运行',row.run_id],['请求模型',row.model_requested],['会话',row.conversation_id||'尚无'],['退出码',row.exit_code??'尚无'],['最近事件',row.last_event_utc]]){
+   const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;el('meta').append(dt,dd);
   }
-  txt('task',r.task);txt('response',r.response||'等待公开回复…');
-  txt('warning',[r.warnings,r.error,r.cleanup_error].filter(Boolean).join('\n')||'无');
-  const response=await fetch('/api/events/'+encodeURIComponent(r.run_id));
-  if(!response.ok)throw Error(response.status);
-  const es=await response.json();if(selected===r.run_id)txt('events',es.map(e=>JSON.stringify(e)).join('\n'));
+  detailKey=key;
+ }
+ await renderEvents(key);
+}
+async function updateHistory(){
+ const rows=allRows.filter(row=>el('show-tests').checked||!isTest(row));
+ if(!pinned||!rows.some(row=>row.run_id===selected))selected=rows[0]?.run_id;
+ const visible=new Set(rows.map(row=>row.run_id)),known=new Set(allRows.map(row=>row.run_id));
+ for(const [id,button] of buttons)if(!known.has(id)){button.remove();buttons.delete(id)}
+ for(let index=0;index<allRows.length;index++){
+  const row=allRows[index];let button=buttons.get(row.run_id);
+  if(!button){
+   button=document.createElement('button');button.type='button';
+   button.onclick=()=>{selected=row.run_id;pinned=true;renderDetail().catch(fail)};
+   buttons.set(row.run_id,button);el('runs').insertBefore(button,el('runs').children[index]||null);
+  }
+  button.hidden=!visible.has(row.run_id);
+  const label=`${kindLabel(row)} · ${states[row.state]||row.state}\n${row.run_id}`;
+  if(button.textContent!==label)button.textContent=label;
+ }
+ await renderDetail();
+}
+el('show-tests').onchange=()=>{pinned=false;el('runs').scrollTop=0;updateHistory().catch(fail)};
+el('details').ontoggle=()=>{if(el('details').open)renderDetail().catch(fail)};
+async function refresh(){
+ try{allRows=await read('/api/runs');await updateHistory();txt('connection','已连接 · '+new Date().toLocaleTimeString('zh-CN'))}
+ catch(error){fail(error)}finally{setTimeout(refresh,750)}
 }
 refresh();
-</script></html>
+</script>
+</html>

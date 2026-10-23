@@ -1,7 +1,6 @@
 """One MCP call maps to one CLI process; no retries, login automation, or shell arguments."""
 
 import asyncio
-import os
 import math
 import shutil
 from pathlib import Path
@@ -51,8 +50,11 @@ class Service:
         self.history = History(settings.state_dir)
         self.monitor = Monitor(settings.state_dir, settings.port)
         self.active = {}
+        self.closing = False
 
     async def run(self, prompt):
+        if self.closing:
+            raise ValueError("Server is shutting down; new calls are not accepted")
         if not self.settings.enabled:
             raise ValueError(
                 "Model execution is disabled. The operator must explicitly set AGY_OBSERVER_ENABLED=1."
@@ -151,6 +153,7 @@ class Service:
         return dict(cancel_requested=True, run_id=run_id)
 
     async def close(self):
+        self.closing = True
         tasks = list(self.active.values())
         for task in tasks:
             task.cancel()

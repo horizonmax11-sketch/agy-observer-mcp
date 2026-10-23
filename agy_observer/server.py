@@ -34,7 +34,7 @@ def create_server(settings=None):
         annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
     )
     def agy_history(limit: int = 20, include_tests: bool = False) -> list[dict]:
-        """Read this instance's local history. Contains stored user prompts and model replies."""
+        """List local history summaries and task previews. Use agy_status for full prompts and replies."""
         return service.history.list(limit, include_tests)
 
     @app.tool(

@@ -46,6 +46,7 @@ class RunRecord:
         self.run_id = run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
         self.path = self.root / self.run_id
         self.path.mkdir()  # exclusive; a run must never silently overwrite history
+        self._snapshot_at = 0.0
         self.state = dict(
             run_id=self.run_id,
             kind=kind,
@@ -67,9 +68,13 @@ class RunRecord:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         self.state["last_event_utc"] = row["time_utc"]
         self.state["last_event"] = event
+        now = time.monotonic()
+        if event == "cli_step_update" and now - self._snapshot_at < 0.1:
+            return  # Preserve every event; coalesce full-response snapshots to at most 10Hz.
         temp = self.path / "status.tmp"
         temp.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(temp, self.path / "status.json")
+        self._snapshot_at = now
 
     def finish(self, state, **data):
         self.state.update(state=state, finished_utc=utc(), **data)
@@ -138,9 +143,6 @@ async def capture(
                 error=type(exc).__name__,
             )
         raise
-    if record:
-        record.state["state"] = "running"
-        record.emit("spawn", pid=process.pid)
     totals = {"stdout": 0, "stderr": 0}
     result_payloads = []
     stream_started = False
@@ -148,7 +150,9 @@ async def capture(
     async def drain(pipe, name):
         nonlocal stream_started
         chunks, pending = [], ""
-        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        decoder = codecs.getincrementaldecoder("utf-8")(
+            "strict" if stream and name == "stdout" else "replace"
+        )
         while True:
             block = await pipe.read(4096)
             if not block:
@@ -208,6 +212,12 @@ async def capture(
                                     for k in ("model", "permission_mode")
                                 }
                             record.emit("cli_" + str(label), **public)
+        tail = decoder.decode(b"", final=True)
+        if record and name == "stderr" and tail:
+            record.state["warnings"] += tail
+            record.emit("stderr", text=tail)
+        if stream and name == "stdout":
+            pending += tail
         if stream and name == "stdout" and pending.strip():
             raise CaptureError("stream ended without a complete NDJSON line")
         return b"".join(chunks)
@@ -226,6 +236,9 @@ async def capture(
     pulse = asyncio.create_task(heartbeat())
     joined = asyncio.gather(*tasks)
     try:
+        if record:
+            record.state["state"] = "running"
+            record.emit("spawn", pid=process.pid)
         stdout, stderr, code = await asyncio.wait_for(joined, timeout)
         if stream and len(result_payloads) != 1:
             raise CaptureError("stream must contain exactly one terminal result")
@@ -236,28 +249,53 @@ async def capture(
     except BaseException as exc:
         for task in tasks:
             task.cancel()
-        cleanup_error = None
-        try:
-            await stop_group(process)
+
+        async def cleanup():
+            errors = []
+            try:
+                await stop_group(process)
+            except Exception as error:
+                errors.append(type(error).__name__)
             await asyncio.gather(*tasks, return_exceptions=True)
-            # Child writers are now dead; drain buffered pipe bytes so Windows transports close.
-            await asyncio.wait_for(process.communicate(), 3)
-        except Exception as cleanup:
-            cleanup_error = str(cleanup)
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.gather(joined, return_exceptions=True)
-        if record:
-            state = (
-                "cancelled"
-                if isinstance(exc, asyncio.CancelledError)
-                else "timeout" if isinstance(exc, asyncio.TimeoutError) else "failed"
-            )
-            record.finish(
-                state,
-                exit_code=process.returncode,
-                error=type(exc).__name__,
-                cleanup_error=cleanup_error,
-            )
+            await asyncio.gather(joined, return_exceptions=True)
+
+            async def discard(pipe):
+                while await pipe.read(4096):
+                    pass
+
+            # Never collect unbounded residual output, including output from a detached writer.
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(discard(process.stdout), discard(process.stderr)), 3
+                )
+            except Exception as error:
+                errors.append(type(error).__name__)
+            if record:
+                state = (
+                    "cancelled"
+                    if isinstance(exc, asyncio.CancelledError)
+                    else "timeout" if isinstance(exc, asyncio.TimeoutError) else "failed"
+                )
+                try:
+                    record.finish(
+                        state,
+                        exit_code=process.returncode,
+                        error=type(exc).__name__,
+                        cleanup_error=", ".join(errors) or None,
+                    )
+                except OSError:
+                    # A failed disk must not prevent process cleanup or replace the original error.
+                    pass
+
+        cleanup_task = asyncio.create_task(cleanup())
+        while True:
+            try:
+                await asyncio.shield(cleanup_task)
+                break
+            except asyncio.CancelledError:
+                if cleanup_task.done():
+                    cleanup_task.result()
+                    break
         raise
     finally:
         pulse.cancel()
