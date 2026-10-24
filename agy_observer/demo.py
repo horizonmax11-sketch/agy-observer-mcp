@@ -27,14 +27,14 @@ async def preview(args):
 
         council = Council(Discussions(args.state_dir))
         identifier = council.create(
-            "离线模拟：三方独立判断后共同完善方案",
+            "离线演示：一起改进讨论方式",
             "全部内容为合成数据，没有调用模型。",
             {"gemini": "simulated-gemini", "claude": "simulated-claude"},
             kind="离线模拟三方协作",
         )["discussion_id"]
         council.note(
             identifier,
-            "模拟初判：需要验证讨论是否产生新信息。",
+            "我先关注一个问题：聊完以后，方案有没有真的变好？可以先保留每个人的第一轮想法，后面看看哪些地方被改动了。",
             "initial",
             initial_context="unknown",
         )
@@ -46,11 +46,10 @@ async def preview(args):
                 "success",
                 json.dumps(
                     dict(
-                        message="模拟初判："
-                        + (
-                            "应保留分歧，避免多数即正确。"
+                        message=(
+                            "我担心大家很快就互相同意。先把各自的想法放一会儿，收齐再看，可能会多留下几个不同角度。"
                             if participant == "gemini"
-                            else "要比较发言顺序改变后的结果。"
+                            else "我还想看看发言顺序的影响。同一个问题，换个人先说，最后会不会走向另一套方案？"
                         ),
                         kind="observation",
                     )
@@ -59,13 +58,13 @@ async def preview(args):
         council.reveal(identifier)
         council.note(
             identifier,
-            "保留首轮判断；围绕证据讨论；交换顺序进行对照；未解决项保留。",
+            "先各自说最关键的一点，再围绕具体问题讨论。大家一起改一份方案，保留不同意见。",
             "plan",
             [1, 2, 3],
             expected_plan_version=0,
         )
         batch = council.reserve(
-            identifier, ["gemini", "claude"], "检查草案遗漏的前提，可pass，不要求一致。", 4
+            identifier, ["gemini", "claude"], "看看这份草案还有哪里值得补充。", 4
         )
         for participant, message_id, _, _ in batch:
             council.finish(
@@ -74,13 +73,12 @@ async def preview(args):
                 "success",
                 json.dumps(
                     dict(
-                        message="模拟补充："
-                        + (
-                            "还需限制轮次，记录新增信息。"
+                        message=(
+                            "这个流程可以试。我会再加一个停止点：额度用完就先整理结果，有分歧的地方留着，下次接着聊。"
                             if participant == "gemini"
-                            else "一次成功不能证明避免了迎合，需要对照。"
+                            else "我想补一个小实验：固定同一批问题和总调用次数，换一下发言顺序，看最后哪些判断跟着变了。"
                         ),
-                        kind="challenge",
+                        kind="observation",
                         references=[4],
                         evidence="离线预设示例，未作实际评估。",
                     )
@@ -88,13 +86,17 @@ async def preview(args):
             )
         council.note(
             identifier,
-            "增加次数上限和对照验证；保留初判、分歧及修改原因。",
+            "先各自说重点，再一起改方案；额度用完就停下来，把未决问题留下。再用同一批问题做顺序对照，看看讨论带来了哪些有用的变化。",
             "plan",
             [4, 5, 6],
             change_reason="补充了成本与验证不足两个角度。",
             expected_plan_version=1,
         )
-        council.note(identifier, "离线演示归档，不代表真实模型效果。", "summary")
+        council.note(
+            identifier,
+            "这段离线示例展示了怎么接话、补充和共同改方案。实际效果留待之后的对照实验观察。",
+            "summary",
+        )
     elif args.collaboration:
         discussions = Discussions(args.state_dir)
         import json

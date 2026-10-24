@@ -15,6 +15,7 @@ nav{padding:16px;border-right:1px solid #2a3440;display:flex;flex-direction:colu
 select{width:100%;font:inherit;color:inherit;background:#171f29;padding:8px;border:1px solid #415b76;margin:6px 0}
 .message{border:1px solid #354557;border-left:3px solid #78b9ff;padding:16px;margin:16px 0}.message.lead{border-left-color:#74c8a1}.message pre{max-height:360px;overflow:auto;margin-top:8px}.message small{display:block;overflow-wrap:anywhere}
 .message.gpt{border-left-color:#74c8a1}.message.claude{border-left-color:#d6a1ef}.message.plan{border:2px solid #b9bb7b}
+.message>pre{font:15px/1.8 "Segoe UI","Microsoft YaHei",sans-serif;background:transparent;padding:0;min-height:0;max-height:none}.message summary{padding:8px 0;font-size:13px}
 label{display:block;padding:8px 0;color:#a6b3c3}input{accent-color:#78b9ff}
 button{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:inherit;padding:12px;margin-bottom:8px;border-radius:4px;font:inherit;cursor:pointer;white-space:pre-wrap}
 button:hover,button[aria-current=true]{background:#202d3c;border-color:#415b76}
@@ -44,7 +45,7 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
   <div id="runs"></div><div id="sessions" hidden></div>
  </nav>
  <article>
- <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><dl id="roles"></dl><p class="muted" id="discussion-help">每轮均由客户端显式发起。</p><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
+ <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><details><summary>参与方式</summary><dl id="roles"></dl><p class="muted">模型名称取自请求记录，GPT 发言由客户端提交。每条发言的“依据与记录”保留完整型号、来源和上下文。</p></details><p class="muted" id="discussion-help">每轮由客户端发起。</p><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
  <section id="single">
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
   <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
@@ -124,13 +125,13 @@ async function updateHistory(){
 }
 el('show-tests').onchange=()=>{pinned=false;el('runs').scrollTop=0;if(el('view').value==='runs')updateHistory().catch(fail)};
 el('details').ontoggle=()=>{if(el('details').open)renderDetail().catch(fail)};
-const messageKinds={proposal:'方案',feedback:'反馈',decision:'决定',summary:'归档',review:'审阅',contribution:'发言',question:'提问',answer:'回应问题',challenge:'质疑',revision:'修正观点',initial:'独立初判',plan:'共同方案草案',observation:'补充观察',evidence:'补充依据',support:'有依据的支持',pass:'暂无新增信息'};
+const messageKinds={proposal:'方案',feedback:'补充',decision:'选择',summary:'讨论小结',review:'建议',contribution:'发言',question:'提问',answer:'回应',challenge:'不同看法',revision:'调整想法',initial:'第一轮想法',plan:'方案草案',observation:'补充想法',evidence:'补充信息',support:'支持',pass:'暂时没有补充'};
 const resolutions={accepted:'采纳',rejected:'拒绝',deferred:'暂缓'};
 function fillDiscussion(data){
  const council=data.protocol==='council-v1',peer=data.protocol==='peer-v1';
  const recordedModels=[...new Set(data.messages.filter(m=>m.author==='reviewer'&&m.model_requested).map(m=>modelName(m.model_requested)))];
  const who=(author,model)=>council?({gpt:'GPT',gemini:'Gemini',claude:'Claude'}[author]||author):author==='lead'?'GPT':model?modelName(model):recordedModels.join(' / ')||'未记录模型';
- txt('discussion-help',isTest(data)?'离线模拟：全部为预设内容，未调用模型。':council?'三方平等参与。首轮仅接收原始材料，收齐后公开；随后共同修改一份方案。支持或回答不等于验证，也不代表全员同意。身份标签表示请求来源，客户端声明未经认证。':`${who('lead')}（绿色，客户端提交）与 ${who('reviewer')}（蓝色，CLI 返回）。${peer?'双方都可主动开题、提问、补证、反驳和修正自己。':''}模型标签不构成身份认证，答复不等于对方已认可。`);
+ txt('discussion-help',isTest(data)?'离线演示：这里都是示例内容，没有调用模型。':council?'先各自想一想，再一起把方案改好。有不同看法可以直接提出，也可以补充信息或调整想法。':`${who('lead')} 与 ${who('reviewer')} 一起讨论。${peer?'可以接着聊、问问题，也可以换个角度看看。':''}`);
  txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · Gemini '+data.attempts.gemini+'/'+data.max_turns_per_model+' · Claude '+data.attempts.claude+'/'+data.max_turns_per_model:''}`);
  el('roles').replaceChildren();
  for(const [role,brief] of Object.entries(data.roles)){
@@ -138,30 +139,32 @@ function fillDiscussion(data){
  }
  el('shared-plan').replaceChildren();
  const plan=council?[...data.messages].reverse().find(m=>m.kind==='plan'):null;
- if(plan){const title=document.createElement('h2'),body=document.createElement('pre'),note=document.createElement('p');title.textContent='当前共同方案草案 · v'+plan.plan_version;body.textContent=plan.content;note.className='muted';note.textContent='整合于 #'+plan.id+'，来源 '+(plan.references||[]).map(i=>'#'+i).join('、')+'。此草案不自动代表三方认可；具体异议保留在下方。';el('shared-plan').append(title,body,note)}
+ if(plan){const title=document.createElement('h2'),body=document.createElement('pre'),note=document.createElement('p');title.textContent='当前方案草案 · v'+plan.plan_version;body.textContent=plan.content;note.className='muted';note.textContent='整理自 '+(plan.references||[]).map(i=>'#'+i).join('、')+'，各方的具体意见见下方。';el('shared-plan').append(title,body,note)}
  if(council&&data.phase==='collect'){const p=document.createElement('p');p.textContent='初判收集：'+Object.entries(data.initial_status||{}).map(([author,state])=>who(author)+' '+(states[state]||({missing:'尚未提交',interrupted:'已中断'}[state]||state))).join('；')+'。'+(data.reveal_ready?'已收齐，等待客户端显式公开。':'三份初判成功后才可公开；超时不视为收齐。')+'封存不限制本机操作者访问运行文件。';el('shared-plan').append(p)}
- if(council&&data.budget_exhausted){const p=document.createElement('p');p.className='muted';p.textContent='双方模型次数已用尽。可以继续记录修订、未决选项或归档；不会自动追加请求或按多数票裁决。';el('shared-plan').append(p)}
+ if(council&&data.budget_exhausted){const p=document.createElement('p');p.className='muted';p.textContent='本轮模型调用已用完，接下来可以整理结果和还没解决的问题。';el('shared-plan').append(p)}
  el('questions').replaceChildren();
  const pending=data.open_questions||[];
  if(pending.length){
   const title=document.createElement('h2');title.textContent='等待回应的问题';el('questions').append(title);
   for(const q of pending){const p=document.createElement('p');p.textContent=`${who(q.author,data.messages[q.message_id-1]?.model_requested)} #${q.message_id}：${q.question}`;el('questions').append(p)}
-  if(data.closed){const p=document.createElement('p');p.textContent='归档时这些问题仍未明确回应，不能视为已经达成共识。';el('questions').append(p)}
+  if(data.closed){const p=document.createElement('p');p.textContent='这些问题留待后续继续讨论。';el('questions').append(p)}
  }
  el('messages').replaceChildren();
  for(const row of data.messages){
   const card=document.createElement('section');card.className='message '+row.author+(row.kind==='plan'?' plan':'');card.id='message-'+row.id;
   const title=document.createElement('strong');title.textContent=`#${row.id} ${who(row.author,row.model_requested)} · ${messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
-  const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'我方取舍：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');card.append(reference);
-  if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮要求：'+row.instruction;card.append(instruction)}
+  const record=document.createElement('details'),recordTitle=document.createElement('summary');recordTitle.textContent='依据与记录';record.append(recordTitle);
+  const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'选择：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');if(reference.textContent)record.append(reference);
+  if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮话题：'+row.instruction;record.append(instruction)}
   const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||'等待公开回复；此轮尚未验收。';card.append(content);
-  for(const [label,value] of [['引用发言',(row.references||[]).map(i=>'#'+i).join('、')],['依据（需核验）',row.evidence],['修正原因',row.change_reason],['首轮上下文',row.initial_context?({fresh:'新上下文；客户端提交项为声明',history_visible:'已看过历史',unknown:'未确认'}[row.initial_context]||row.initial_context):'']]){if(value){const p=document.createElement('p');p.textContent=label+'：'+value;card.append(p)}}
-  if(row.question&&row.kind!=='question'){const q=document.createElement('p');q.textContent='向对方提问：'+row.question;card.append(q)}
-  if(row.answers_to?.length){const a=document.createElement('small');a.textContent='明确回应问题：'+row.answers_to.map(i=>'#'+i).join('、');card.append(a)}
-  if(row.protocol_warning){const w=document.createElement('small');w.textContent=row.protocol_warning;card.append(w)}
+  for(const [label,value] of [['接着这些发言',(row.references||[]).map(i=>'#'+i).join('、')],['补充依据',row.evidence],['调整原因',row.change_reason],['首轮上下文',row.initial_context?({fresh:'新上下文（客户端提交项按其声明记录）',history_visible:'已看过历史',unknown:'未确认'}[row.initial_context]||row.initial_context):'']]){if(value){const p=document.createElement('p');p.textContent=label+'：'+value;record.append(p)}}
+  if(row.question&&row.kind!=='question'){const q=document.createElement('p');q.textContent='想问一下：'+row.question;card.append(q)}
+  if(row.answers_to?.length){const a=document.createElement('small');a.textContent='回应的问题：'+row.answers_to.map(i=>'#'+i).join('、');record.append(a)}
+  if(row.protocol_warning){const w=document.createElement('small');w.textContent=row.protocol_warning;record.append(w)}
   if(row.error){const error=document.createElement('p');error.textContent='错误：'+row.error;card.append(error)}
   if(row.content_truncated){const note=document.createElement('small');note.textContent='此处为回复摘录，完整内容请用 agy_status 查询上方调用编号。';card.append(note)}
-  if(row.context){const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent='本轮共享上下文';pre.textContent=JSON.stringify(row.context,null,2);details.append(summary,pre);card.append(details)}
+  if(row.context){const label=document.createElement('p'),pre=document.createElement('pre');label.textContent='本轮共享上下文';pre.textContent=JSON.stringify(row.context,null,2);record.append(label,pre)}
+  if(record.children.length>1)card.append(record);
   el('messages').append(card);
  }
  if(!data.messages.length){const p=document.createElement('p');p.textContent='尚无发言。任一伙伴都可以先开题，不要求客户端先交方案。';el('messages').append(p)}
