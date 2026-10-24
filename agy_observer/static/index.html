@@ -48,7 +48,7 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
  <section id="single">
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
   <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
-  <h2>助手回复</h2><pre id="response" aria-live="polite"></pre>
+  <h2 id="assistant-name">模型回复</h2><pre id="response" aria-live="polite"></pre>
   <h2>警告与错误信息</h2><pre id="warning"></pre>
   <details id="details"><summary>调用详情与事件记录</summary><dl id="meta"></dl><pre id="events"></pre></details>
   <p class="muted">仅展示公开事件与回复。心跳表示仍在等待，不代表生成进度。本页只读，不发起模型请求。</p>
@@ -63,6 +63,7 @@ const buttons=new Map(), el=id=>document.getElementById(id);
 const states={created:'准备中',running:'生成中',success:'已完成',failed:'失败',timeout:'超时',cancelled:'已取消'};
 const txt=(id,value)=>{const text=String(value??'');if(el(id).textContent!==text)el(id).textContent=text};
 const kindLabel=row=>row.kind==='离线夹具'?'离线测试':row.kind;
+const modelName=model=>!model?'未记录模型':/^gemini(?:-|$)/i.test(model)?'Gemini':/^claude(?:-|$)/i.test(model)?'Claude':/^gpt(?:-|$)/i.test(model)?'GPT':model;
 const isTest=row=>row.kind.includes('离线')||row.kind.includes('模拟');
 const fail=error=>txt('connection','连接中断：'+error.message);
 el('view').value=new URLSearchParams(location.search).get('view')==='discussions'?'discussions':'runs';
@@ -75,7 +76,7 @@ el('view').onchange=switchView;switchView();
 el('show-tests').checked=new URLSearchParams(location.search).get('tests')==='1';
 async function read(path){const response=await fetch(path);if(!response.ok)throw Error(response.status);return response.json()}
 function clearDetail(){
- detailKey=null;eventKey=null;txt('state','暂无记录');txt('kind','');txt('task','暂无可见的对话记录。');
+ detailKey=null;eventKey=null;txt('state','暂无记录');txt('kind','');txt('task','暂无可见的对话记录。');txt('assistant-name','模型回复');
  for(const id of ['response','warning','events'])txt(id,'');el('meta').replaceChildren();
 }
 async function renderEvents(key){
@@ -93,6 +94,7 @@ async function renderDetail(){
   const row=await read('/api/status/'+encodeURIComponent(id));if(id!==selected)return;
   txt('state',states[row.state]||row.state);txt('kind',kindLabel(row));
   txt('task',row.task);txt('response',row.response||'正在等待公开回复…');
+  txt('assistant-name',modelName(row.model_requested)+' 回复');
   txt('warning',[row.warnings,row.error,row.cleanup_error].filter(Boolean).join('\n')||'无');
   el('meta').replaceChildren();
   for(const [label,value] of [['运行',row.run_id],['请求模型',row.model_requested],['会话',row.conversation_id||'尚无'],['退出码',row.exit_code??'尚无'],['最近事件',row.last_event_utc]]){
@@ -125,8 +127,10 @@ el('details').ontoggle=()=>{if(el('details').open)renderDetail().catch(fail)};
 const messageKinds={proposal:'方案',feedback:'反馈',decision:'决定',summary:'归档',review:'审阅',contribution:'发言',question:'提问',answer:'回应问题',challenge:'质疑',revision:'修正观点',initial:'独立初判',plan:'共同方案草案',observation:'补充观察',evidence:'补充依据',support:'有依据的支持',pass:'暂无新增信息'};
 const resolutions={accepted:'采纳',rejected:'拒绝',deferred:'暂缓'};
 function fillDiscussion(data){
- const council=data.protocol==='council-v1',peer=data.protocol==='peer-v1',who=author=>council?({gpt:'GPT（客户端）',gemini:'Gemini',claude:'Claude'}[author]||author):peer?(author==='lead'?'伙伴A':'伙伴B'):(author==='lead'?'主维护者':'审阅者');
- txt('discussion-help',isTest(data)?'离线模拟：全部为预设内容，未调用模型。':council?'三方平等参与。首轮仅接收原始材料，收齐后公开；随后共同修改一份方案。支持或回答不等于验证，也不代表全员同意。身份标签表示请求来源，客户端声明未经认证。':peer?'双方都可主动开题、提问、补证、反驳和修正自己。绿色是客户端伙伴，蓝色是模型伙伴；答复不等于对方已认可。':'绿色：主维护者（客户端提交）；蓝色：审阅者（CLI模型返回）。');
+ const council=data.protocol==='council-v1',peer=data.protocol==='peer-v1';
+ const recordedModels=[...new Set(data.messages.filter(m=>m.author==='reviewer'&&m.model_requested).map(m=>modelName(m.model_requested)))];
+ const who=(author,model)=>council?({gpt:'GPT',gemini:'Gemini',claude:'Claude'}[author]||author):author==='lead'?'GPT':model?modelName(model):recordedModels.join(' / ')||'未记录模型';
+ txt('discussion-help',isTest(data)?'离线模拟：全部为预设内容，未调用模型。':council?'三方平等参与。首轮仅接收原始材料，收齐后公开；随后共同修改一份方案。支持或回答不等于验证，也不代表全员同意。身份标签表示请求来源，客户端声明未经认证。':`${who('lead')}（绿色，客户端提交）与 ${who('reviewer')}（蓝色，CLI 返回）。${peer?'双方都可主动开题、提问、补证、反驳和修正自己。':''}模型标签不构成身份认证，答复不等于对方已认可。`);
  txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · Gemini '+data.attempts.gemini+'/'+data.max_turns_per_model+' · Claude '+data.attempts.claude+'/'+data.max_turns_per_model:''}`);
  el('roles').replaceChildren();
  for(const [role,brief] of Object.entries(data.roles)){
@@ -141,13 +145,13 @@ function fillDiscussion(data){
  const pending=data.open_questions||[];
  if(pending.length){
   const title=document.createElement('h2');title.textContent='等待回应的问题';el('questions').append(title);
-  for(const q of pending){const p=document.createElement('p');p.textContent=`${who(q.author)} #${q.message_id}：${q.question}`;el('questions').append(p)}
+  for(const q of pending){const p=document.createElement('p');p.textContent=`${who(q.author,data.messages[q.message_id-1]?.model_requested)} #${q.message_id}：${q.question}`;el('questions').append(p)}
   if(data.closed){const p=document.createElement('p');p.textContent='归档时这些问题仍未明确回应，不能视为已经达成共识。';el('questions').append(p)}
  }
  el('messages').replaceChildren();
  for(const row of data.messages){
   const card=document.createElement('section');card.className='message '+row.author+(row.kind==='plan'?' plan':'');card.id='message-'+row.id;
-  const title=document.createElement('strong');title.textContent=`#${row.id} ${who(row.author)} · ${messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
+  const title=document.createElement('strong');title.textContent=`#${row.id} ${who(row.author,row.model_requested)} · ${messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
   const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'我方取舍：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');card.append(reference);
   if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮要求：'+row.instruction;card.append(instruction)}
   const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||'等待公开回复；此轮尚未验收。';card.append(content);
