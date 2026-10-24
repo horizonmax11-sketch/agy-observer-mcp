@@ -43,7 +43,20 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     tools = await session.list_tools()
                     self.assertEqual(
                         sorted(t.name for t in tools.tools),
-                        ["agy_cancel", "agy_history", "agy_info", "agy_run", "agy_status"],
+                        sorted(
+                            [
+                                "agy_cancel",
+                                "agy_history",
+                                "agy_info",
+                                "agy_run",
+                                "agy_status",
+                                "agy_discussion_create",
+                                "agy_discussion_read",
+                                "agy_discussion_note",
+                                "agy_discussion_turn",
+                                "agy_discussion_recover",
+                            ]
+                        ),
                     )
                     run = next(t for t in tools.tools if t.name == "agy_run")
                     self.assertFalse(run.annotations.readOnlyHint)
@@ -54,3 +67,30 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertTrue(result.isError)
                     self.assertFalse((Path(folder) / "runs").exists())
+
+                    created = await session.call_tool(
+                        "agy_discussion_create", {"goal": "synthetic collaboration"}
+                    )
+                    import json
+
+                    task = json.loads(created.content[0].text)
+                    identifier = task["discussion_id"]
+                    self.assertFalse((await session.call_tool("agy_discussion_read", {})).isError)
+                    note = await session.call_tool(
+                        "agy_discussion_note",
+                        {
+                            "discussion_id": identifier,
+                            "content": "synthetic proposal",
+                            "kind": "proposal",
+                        },
+                    )
+                    self.assertFalse(note.isError)
+                    denied = await session.call_tool(
+                        "agy_discussion_turn",
+                        {"discussion_id": identifier, "instruction": "synthetic review"},
+                    )
+                    self.assertTrue(denied.isError)
+                    loaded = await session.call_tool(
+                        "agy_discussion_read", {"discussion_id": identifier}
+                    )
+                    self.assertEqual(json.loads(loaded.content[0].text)["model_attempts"], 0)

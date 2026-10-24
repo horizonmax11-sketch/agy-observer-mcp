@@ -16,6 +16,8 @@ SUMMARY_KEYS = (
     "finished_utc",
     "last_event_utc",
     "exit_code",
+    "discussion_id",
+    "discussion_message_id",
 )
 
 

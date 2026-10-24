@@ -11,7 +11,9 @@ header{flex:none;padding:20px 28px;border-bottom:1px solid #2a3440;display:flex;
 h1{font-size:20px;margin:0}small,.muted{color:#a6b3c3}#connection{margin-left:auto}
 main{display:grid;grid-template-columns:290px minmax(0,1fr);flex:1;min-height:0;overflow:hidden}
 nav{padding:16px;border-right:1px solid #2a3440;display:flex;flex-direction:column;min-height:0;overflow:hidden}
-#runs{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-top:12px}
+#runs,#sessions{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-top:12px}
+select{width:100%;font:inherit;color:inherit;background:#171f29;padding:8px;border:1px solid #415b76;margin:6px 0}
+.message{border:1px solid #354557;border-left:3px solid #78b9ff;padding:16px;margin:16px 0}.message.lead{border-left-color:#74c8a1}.message pre{max-height:360px;overflow:auto;margin-top:8px}.message small{display:block;overflow-wrap:anywhere}
 label{display:block;padding:8px 0;color:#a6b3c3}input{accent-color:#78b9ff}
 button{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:inherit;padding:12px;margin-bottom:8px;border-radius:4px;font:inherit;cursor:pointer;white-space:pre-wrap}
 button:hover,button[aria-current=true]{background:#202d3c;border-color:#415b76}
@@ -27,34 +29,46 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
 @media(max-width:720px){
  main{grid-template-columns:1fr;grid-template-rows:150px minmax(0,1fr)}
  nav{padding:8px 16px;border-right:0;border-bottom:1px solid #2a3440}nav>.muted{display:none}
- label{padding:0}#runs{padding-top:4px}#runs button{padding:6px 10px;margin-bottom:4px}
+ label{padding:0}#runs,#sessions{padding-top:4px}#runs button{padding:6px 10px;margin-bottom:4px}
  header{padding:10px 16px;gap:8px;flex-wrap:wrap}header small{font-size:12px}article{padding:12px 16px}
 }
 </style>
 <header><h1>AGY Observer</h1><small>本地对话记录（只读）</small><small id="connection">正在连接…</small></header>
 <main>
  <nav aria-label="调用历史">
-  <div class="muted">最近 200 次调用</div>
+  <label for="view">查看内容</label><select id="view"><option value="runs">单次调用</option><option value="discussions">协作任务</option></select>
   <label><input id="show-tests" type="checkbox"> 显示离线测试与模拟记录</label>
-  <div id="runs"></div>
+  <div id="runs"></div><div id="sessions" hidden></div>
  </nav>
  <article>
+ <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><dl id="roles"></dl><p class="muted" id="discussion-help">绿色：主维护者（客户端提交，身份未经验证）；蓝色：审阅者（CLI模型返回）。每次审阅均为显式调用，不会自动讨论。</p><div id="messages"></div></section>
+ <section id="single">
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
   <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
   <h2>助手回复</h2><pre id="response" aria-live="polite"></pre>
   <h2>警告与错误信息</h2><pre id="warning"></pre>
   <details id="details"><summary>调用详情与事件记录</summary><dl id="meta"></dl><pre id="events"></pre></details>
   <p class="muted">仅展示公开事件与回复。心跳表示仍在等待，不代表生成进度。本页只读，不发起模型请求。</p>
+ </section>
  </article>
 </main>
 <script>
 let selected=null, pinned=false, allRows=[], detailKey=null, eventKey=null;
+let selectedDiscussion=null, discussionKey=null, discussionData=null;
+const sessionButtons=new Map();
 const buttons=new Map(), el=id=>document.getElementById(id);
 const states={created:'准备中',running:'生成中',success:'已完成',failed:'失败',timeout:'超时',cancelled:'已取消'};
 const txt=(id,value)=>{const text=String(value??'');if(el(id).textContent!==text)el(id).textContent=text};
 const kindLabel=row=>row.kind==='离线夹具'?'离线测试':row.kind;
 const isTest=row=>row.kind.includes('离线')||row.kind.includes('模拟');
 const fail=error=>txt('connection','连接中断：'+error.message);
+el('view').value=new URLSearchParams(location.search).get('view')==='discussions'?'discussions':'runs';
+function switchView(){
+ const discussion=el('view').value==='discussions';
+ el('runs').hidden=discussion;el('sessions').hidden=!discussion;
+ el('single').hidden=discussion;el('discussion').hidden=!discussion;
+}
+el('view').onchange=switchView;switchView();
 el('show-tests').checked=new URLSearchParams(location.search).get('tests')==='1';
 async function read(path){const response=await fetch(path);if(!response.ok)throw Error(response.status);return response.json()}
 function clearDetail(){
@@ -103,11 +117,63 @@ async function updateHistory(){
  }
  await renderDetail();
 }
-el('show-tests').onchange=()=>{pinned=false;el('runs').scrollTop=0;updateHistory().catch(fail)};
+el('show-tests').onchange=()=>{pinned=false;el('runs').scrollTop=0;if(el('view').value==='runs')updateHistory().catch(fail)};
 el('details').ontoggle=()=>{if(el('details').open)renderDetail().catch(fail)};
+const messageKinds={proposal:'方案',feedback:'反馈',decision:'决定',summary:'总结',review:'审阅'};
+const resolutions={accepted:'采纳',rejected:'拒绝',deferred:'暂缓'};
+function fillDiscussion(data){
+ txt('discussion-help',isTest(data)?'离线模拟：此任务全部为预设内容，未调用模型。绿色表示主维护者，蓝色表示模拟审阅者。':'绿色：主维护者（客户端提交，身份未经验证）；蓝色：审阅者（CLI模型返回）。每次审阅均为显式调用，不会自动讨论。');
+ txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已总结':'进行中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}`);
+ el('roles').replaceChildren();
+ for(const [role,brief] of Object.entries(data.roles)){
+  const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=role==='lead'?'主维护者':'审阅者';dd.textContent=brief;el('roles').append(dt,dd);
+ }
+ el('messages').replaceChildren();
+ for(const row of data.messages){
+  const card=document.createElement('section');card.className='message '+row.author;card.id='message-'+row.id;
+  const title=document.createElement('strong');title.textContent=`#${row.id} ${row.author==='lead'?'主维护者':'审阅者'} · ${messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
+  const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');card.append(reference);
+  if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮要求：'+row.instruction;card.append(instruction)}
+  const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||'等待公开回复；此轮尚未验收。';card.append(content);
+  if(row.error){const error=document.createElement('p');error.textContent='错误：'+row.error;card.append(error)}
+  if(row.content_truncated){const note=document.createElement('small');note.textContent='此处为回复摘录，完整内容请用 agy_status 查询上方调用编号。';card.append(note)}
+  if(row.context){const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent='本轮共享上下文';pre.textContent=JSON.stringify(row.context,null,2);details.append(summary,pre);card.append(details)}
+  el('messages').append(card);
+ }
+ if(!data.messages.length){const p=document.createElement('p');p.textContent='尚无消息。先提交主维护者方案，再请求审阅。';el('messages').append(p)}
+}
+async function updateDiscussions(rows){
+ const visible=rows.filter(row=>el('show-tests').checked||!isTest(row));
+ const known=new Set(rows.map(row=>row.discussion_id));
+ for(const [id,button] of sessionButtons)if(!known.has(id)){button.remove();sessionButtons.delete(id)}
+ for(let index=0;index<rows.length;index++){
+  const row=rows[index];let button=sessionButtons.get(row.discussion_id);
+  if(!button){button=document.createElement('button');button.type='button';button.onclick=()=>{selectedDiscussion=row.discussion_id;discussionKey=null};sessionButtons.set(row.discussion_id,button);el('sessions').insertBefore(button,el('sessions').children[index]||null)}
+  button.hidden=!visible.includes(row);const label=`${row.closed?'已总结':'协作中'} · ${row.model_attempts}/${row.max_model_turns}次尝试\n${row.goal_preview}`;if(button.textContent!==label)button.textContent=label;
+ }
+ if(!visible.some(row=>row.discussion_id===selectedDiscussion)){selectedDiscussion=visible[0]?.discussion_id;discussionKey=null}
+ for(const [id,button] of sessionButtons)button.setAttribute('aria-current',id===selectedDiscussion);
+ if(!selectedDiscussion){discussionKey=null;discussionData=null;txt('goal','暂无协作任务');txt('discussion-state','暂无记录');txt('discussion-help','创建协作目标，提交主维护者方案后再请求审阅。');el('roles').replaceChildren();el('messages').replaceChildren();return}
+ const row=visible.find(row=>row.discussion_id===selectedDiscussion),id=selectedDiscussion,key=id+':'+row.updated_utc;
+ if(key!==discussionKey){
+  const data=await read('/api/discussions/'+encodeURIComponent(id));if(id!==selectedDiscussion||el('view').value!=='discussions')return;
+  discussionData=data;fillDiscussion(data);discussionKey=key;
+ }
+ for(const message of discussionData.messages.filter(m=>m.state==='running'&&m.run_id)){
+  const status=await read('/api/status/'+encodeURIComponent(message.run_id));if(id!==selectedDiscussion||el('view').value!=='discussions')return;
+  txt('message-content-'+message.id,(status.response||'等待公开回复…')+'\n\n实时预览：'+(states[status.state]||status.state)+'；协作记录尚待终态确认。');
+ }
+}
 async function refresh(){
- try{allRows=await read('/api/runs');await updateHistory();txt('connection','已连接 · '+new Date().toLocaleTimeString('zh-CN'))}
- catch(error){fail(error)}finally{setTimeout(refresh,750)}
+ const mode=el('view').value;
+ try{
+  if(mode==='discussions'){
+   const rows=await read('/api/discussions');if(el('view').value===mode)await updateDiscussions(rows);
+  }else{
+   const rows=await read('/api/runs');if(el('view').value===mode){allRows=rows;await updateHistory()}
+  }
+  txt('connection','已连接 · '+new Date().toLocaleTimeString('zh-CN'));
+ }catch(error){fail(error)}finally{setTimeout(refresh,750)}
 }
 refresh();
 </script>

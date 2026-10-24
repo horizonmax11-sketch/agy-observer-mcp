@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 from .config import Settings
+from .discussions import Discussions
 from .history import History
 from .monitor import Monitor
 from .runtime import RunRecord, capture
@@ -48,11 +49,12 @@ class Service:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.history = History(settings.state_dir)
+        self.discussions = Discussions(settings.state_dir)
         self.monitor = Monitor(settings.state_dir, settings.port)
         self.active = {}
         self.closing = False
 
-    async def run(self, prompt):
+    async def run(self, prompt, *, discussion=None):
         if self.closing:
             raise ValueError("Server is shutting down; new calls are not accepted")
         if not self.settings.enabled:
@@ -80,9 +82,19 @@ class Service:
         record = RunRecord(self.history.root, prompt, self.settings.model, "真实对话")
         self.active[record.run_id] = asyncio.current_task()
         try:
+            if discussion:
+                record.state.update(
+                    discussion_id=discussion[0], discussion_message_id=discussion[1]
+                )
+                record.emit(
+                    "discussion_linked", discussion_id=discussion[0], message_id=discussion[1]
+                )
+                self.discussions.link(
+                    discussion[0], discussion[1], record.run_id, self.settings.model
+                )
             self.monitor.start()
             if self.settings.open_browser:
-                await self.monitor.open()
+                await self.monitor.open(view="discussions" if discussion else None)
                 record.emit("monitor_window_requested", url=self.monitor.url)
             command = [
                 executable,
@@ -144,6 +156,66 @@ class Service:
             raise
         finally:
             self.active.pop(record.run_id, None)
+
+    async def discussion_turn(self, discussion_id, instruction, reply_to=None):
+        if self.closing or not self.settings.enabled:
+            raise ValueError("Model execution is disabled or server is shutting down")
+        if self.active:
+            raise ValueError("Another model call is active")
+        message_id, prompt = self.discussions.reserve(discussion_id, instruction, reply_to)
+        try:
+            result = await self.run(prompt, discussion=(discussion_id, message_id))
+        except BaseException as error:
+            state = (
+                "cancelled"
+                if isinstance(error, asyncio.CancelledError)
+                else "timeout" if isinstance(error, asyncio.TimeoutError) else "failed"
+            )
+            try:
+                self.discussions.finish(
+                    discussion_id, message_id, state, error=type(error).__name__
+                )
+            except (OSError, ValueError):
+                pass  # Keep the original failure; explicit recovery can reconcile a terminal run.
+            raise
+        data = self.discussions.finish(discussion_id, message_id, "success", result["response"])
+        return dict(
+            discussion_id=discussion_id,
+            message_id=message_id,
+            model_attempts=data["model_attempts"],
+            max_model_turns=data["max_model_turns"],
+            **result,
+        )
+
+    def discussion_recover(self, discussion_id):
+        data = self.discussions.read(discussion_id)
+        for message in data["messages"]:
+            if message.get("state") != "running":
+                continue
+            run_id = message.get("run_id")
+            if run_id in self.active:
+                raise ValueError("Cannot recover a call active in this server")
+            if run_id:
+                status = self.history.status(run_id)
+                if status["state"] not in {"success", "failed", "timeout", "cancelled"}:
+                    raise ValueError(
+                        "Linked run is not terminal; inspect the process before recovery"
+                    )
+                data = self.discussions.finish(
+                    discussion_id,
+                    message["id"],
+                    status["state"],
+                    status["response"],
+                    status.get("error"),
+                )
+            else:
+                data = self.discussions.finish(
+                    discussion_id,
+                    message["id"],
+                    "interrupted",
+                    error="Interrupted before run registration",
+                )
+        return data
 
     def cancel(self, run_id):
         task = self.active.get(run_id)

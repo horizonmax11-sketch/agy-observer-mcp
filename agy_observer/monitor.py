@@ -13,11 +13,13 @@ import threading
 from urllib.parse import urlsplit
 
 from .history import History
+from .discussions import Discussions
 
 
 class Monitor:
     def __init__(self, state_dir, port=0):
         self.history = History(state_dir)
+        self.discussions = Discussions(state_dir)
         self.requested_port = port
         self.server = None
         self.thread = None
@@ -45,6 +47,16 @@ class Monitor:
                     if path == "/":
                         body = files("agy_observer").joinpath("static/index.html").read_bytes()
                         kind = "text/html; charset=utf-8"
+                    elif path == "/api/discussions":
+                        body = json.dumps(
+                            monitor.discussions.list(100), ensure_ascii=False
+                        ).encode()
+                        kind = "application/json; charset=utf-8"
+                    elif re.fullmatch(r"/api/discussions/[A-Za-z0-9_-]{1,100}", path):
+                        body = json.dumps(
+                            monitor.discussions.read(path.rsplit("/", 1)[-1]), ensure_ascii=False
+                        ).encode()
+                        kind = "application/json; charset=utf-8"
                     elif path == "/api/runs":
                         body = json.dumps(
                             monitor.history.list(200, True), ensure_ascii=False
@@ -83,8 +95,13 @@ class Monitor:
         self.thread.start()
         return self.url
 
-    async def open(self, include_tests=False):
-        url = self.start() + ("?tests=1" if include_tests else "")
+    async def open(self, include_tests=False, view=None):
+        url = self.start()
+        query = (["tests=1"] if include_tests else []) + (
+            ["view=discussions"] if view == "discussions" else []
+        )
+        if query:
+            url += "?" + "&".join(query)
         if os.name == "nt":
             os.startfile(url)
             return url

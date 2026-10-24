@@ -21,3 +21,5 @@ credentials*
 tokens*
 auth.json
 test-results.local.json
+
+discussions/
