@@ -7,17 +7,95 @@ from pathlib import Path
 from .monitor import Monitor
 from .runtime import RunRecord
 from .discussions import Discussions
+from .council import Council
 
 
 async def preview(args):
     monitor = Monitor(args.state_dir, args.port)
     print(
-        monitor.start() + "?tests=1" + ("&view=discussions" if args.collaboration else ""),
+        monitor.start()
+        + "?tests=1"
+        + ("&view=discussions" if args.collaboration or args.council else ""),
         flush=True,
     )
     if args.open:
-        await monitor.open(include_tests=True, view="discussions" if args.collaboration else None)
-    if args.collaboration:
+        await monitor.open(
+            include_tests=True, view="discussions" if args.collaboration or args.council else None
+        )
+    if args.council:
+        import json
+
+        council = Council(Discussions(args.state_dir))
+        identifier = council.create(
+            "离线模拟：三方独立判断后共同完善方案",
+            "全部内容为合成数据，没有调用模型。",
+            {"gemini": "simulated-gemini", "claude": "simulated-claude"},
+            kind="离线模拟三方协作",
+        )["discussion_id"]
+        council.note(
+            identifier,
+            "模拟初判：需要验证讨论是否产生新信息。",
+            "initial",
+            initial_context="unknown",
+        )
+        initial = council.reserve(identifier, ["gemini", "claude"])
+        for participant, message_id, _, _ in initial:
+            council.finish(
+                identifier,
+                message_id,
+                "success",
+                json.dumps(
+                    dict(
+                        message="模拟初判："
+                        + (
+                            "应保留分歧，避免多数即正确。"
+                            if participant == "gemini"
+                            else "要比较发言顺序改变后的结果。"
+                        ),
+                        kind="observation",
+                    )
+                ),
+            )
+        council.reveal(identifier)
+        council.note(
+            identifier,
+            "保留首轮判断；围绕证据讨论；交换顺序进行对照；未解决项保留。",
+            "plan",
+            [1, 2, 3],
+            expected_plan_version=0,
+        )
+        batch = council.reserve(
+            identifier, ["gemini", "claude"], "检查草案遗漏的前提，可pass，不要求一致。", 4
+        )
+        for participant, message_id, _, _ in batch:
+            council.finish(
+                identifier,
+                message_id,
+                "success",
+                json.dumps(
+                    dict(
+                        message="模拟补充："
+                        + (
+                            "还需限制轮次，记录新增信息。"
+                            if participant == "gemini"
+                            else "一次成功不能证明避免了迎合，需要对照。"
+                        ),
+                        kind="challenge",
+                        references=[4],
+                        evidence="离线预设示例，未作实际评估。",
+                    )
+                ),
+            )
+        council.note(
+            identifier,
+            "增加次数上限和对照验证；保留初判、分歧及修改原因。",
+            "plan",
+            [4, 5, 6],
+            change_reason="补充了成本与验证不足两个角度。",
+            expected_plan_version=1,
+        )
+        council.note(identifier, "离线演示归档，不代表真实模型效果。", "summary")
+    elif args.collaboration:
         discussions = Discussions(args.state_dir)
         import json
 
@@ -107,6 +185,11 @@ def main():
     parser.add_argument("--open", action="store_true")
     parser.add_argument(
         "--collaboration", action="store_true", help="Show a synthetic two-party review workflow"
+    )
+    parser.add_argument(
+        "--council",
+        action="store_true",
+        help="Show a synthetic GPT/Gemini/Claude workflow; no models",
     )
     args = parser.parse_args()
     try:

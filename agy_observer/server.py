@@ -7,6 +7,7 @@ from mcp.types import ToolAnnotations
 from . import __version__
 from .config import Settings
 from .service import Service
+from .council import public
 
 
 def create_server(settings=None):
@@ -71,7 +72,7 @@ def create_server(settings=None):
     def agy_discussion_read(discussion_id: str | None = None, limit: int = 20) -> dict | list[dict]:
         """List task summaries when discussion_id is omitted; otherwise read roles, attributed messages, decisions, context manifests and linked runs. No model call."""
         return (
-            service.discussions.read(discussion_id)
+            public(service.discussions.read(discussion_id))
             if discussion_id
             else service.discussions.list(limit)
         )
@@ -110,6 +111,68 @@ def create_server(settings=None):
         return service.discussion_recover(discussion_id)
 
     @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+    )
+    def agy_council_create(goal: str, facts: str = "", max_turns_per_model: int = 2) -> dict:
+        """Create a GPT/Gemini/Claude task with sealed initial judgments and separate 1..8 AGY attempt budgets. No model call."""
+        return service.council.create(
+            goal,
+            facts,
+            {"gemini": service.settings.model, "claude": service.settings.claude_model},
+            max_turns_per_model,
+        )
+
+    @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+    )
+    def agy_council_note(
+        discussion_id: str,
+        content: str,
+        kind: str = "observation",
+        references: list[int] | None = None,
+        evidence: str = "",
+        change_reason: str = "",
+        question: str | None = None,
+        answers_to: list[int] | None = None,
+        initial_context: str = "history_visible",
+        expected_plan_version: int | None = None,
+    ) -> dict:
+        """Submit GPT/client public contribution. During collect use initial with honest context declaration (not authenticated). Later revision needs reason+references; support needs grounds+references; plan needs sources+expected version; summary archives without consensus. No model call."""
+        return service.council.note(
+            discussion_id,
+            content,
+            kind,
+            references,
+            evidence,
+            change_reason,
+            question,
+            answers_to,
+            initial_context,
+            expected_plan_version,
+        )
+
+    @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
+    )
+    async def agy_council_round(
+        discussion_id: str,
+        participants: list[str] | None = None,
+        focus: str = "",
+        reply_to: int | None = None,
+    ) -> dict:
+        """Explicitly call Gemini and/or Claude once each via AGY (default both concurrently). Separate attempt budgets; no retries/loop. Collect uses only original material, disallows leading focus, and keeps replies sealed. Later batch shares a pre-call snapshot. May incur cost; CLI tools are not forcibly disabled."""
+        return await service.council_round(discussion_id, participants, focus, reply_to)
+
+    @app.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+        )
+    )
+    def agy_council_reveal(discussion_id: str) -> dict:
+        """Publish all three successful initial judgments together and enable shared discussion. No model call. Sealing is workflow isolation, not a local access-control boundary."""
+        return service.council.reveal(discussion_id)
+
+    @app.tool(
         annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
     )
     def agy_info() -> dict:
@@ -118,6 +181,11 @@ def create_server(settings=None):
             version=__version__,
             execution_enabled=service.settings.enabled,
             model_requested=service.settings.model,
+            council_models={
+                "gemini": service.settings.model,
+                "claude": service.settings.claude_model,
+            },
+            max_concurrent_council_models=2,
             monitor_url=service.monitor.url,
             cli_timeout=service.settings.cli_timeout,
             outer_timeout=service.settings.outer_timeout,

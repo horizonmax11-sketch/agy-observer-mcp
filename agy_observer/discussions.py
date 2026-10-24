@@ -114,10 +114,19 @@ class Discussions:
             or len(data["messages"]) > MAX_MESSAGES
             or type(data.get("model_attempts")) is not int
             or type(data.get("max_model_turns")) is not int
-            or not 0 <= data["model_attempts"] <= data["max_model_turns"] <= 8
+            or not 0
+            <= data["model_attempts"]
+            <= data["max_model_turns"]
+            <= (16 if data.get("protocol") == "council-v1" else 8)
             or not isinstance(data.get("closed"), bool)
         ):
             raise ValueError("Invalid discussion document")
+        if data.get("protocol") == "council-v1":
+            from .council import validate
+
+            validate(data)
+            data["open_questions"] = self.questions(data)
+            return data
         for index, message in enumerate(data["messages"], 1):
             if (
                 not isinstance(message, dict)
@@ -264,6 +273,8 @@ class Discussions:
             raise ValueError("resolution is only valid for a decision")
         with self.writing():
             data = self.read(discussion_id)
+            if data.get("protocol") == "council-v1":
+                raise ValueError("Use council tools for a three-participant task")
             self.writable(data)
             self.reference(data, reply_to)
             if kind == "question":
@@ -304,6 +315,8 @@ class Discussions:
         instruction = checked(instruction, 2000, "instruction")
         with self.writing():
             data = self.read(discussion_id)
+            if data.get("protocol") == "council-v1":
+                raise ValueError("Use council tools for a three-participant task")
             self.writable(data)
             self.reference(data, reply_to)
             if any(m.get("state") == "running" for m in data["messages"]):

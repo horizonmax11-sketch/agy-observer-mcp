@@ -9,6 +9,7 @@ from pathlib import Path
 class Settings:
     executable: str = "agy"
     model: str = "gemini-3.8-flash-low"
+    claude_model: str = "claude-sonnet-4-6"
     state_dir: Path = Path("state")
     workspace: Path | None = None
     enabled: bool = False
@@ -19,13 +20,17 @@ class Settings:
     output_limit: int = 2 * 1024 * 1024
 
     def __post_init__(self):
-        if (
-            not self.model
-            or self.model.startswith("-")
-            or len(self.model) > 160
-            or any(ord(c) < 32 for c in self.model)
-        ):
-            raise ValueError("Invalid model label")
+        for model in (self.model, self.claude_model):
+            if (
+                not isinstance(model, str)
+                or not model
+                or model.startswith("-")
+                or len(model) > 160
+                or any(ord(c) < 32 for c in model)
+            ):
+                raise ValueError("Invalid model label")
+        if self.model == self.claude_model:
+            raise ValueError("Gemini and Claude must have distinct configured model identifiers")
         if not 0 <= self.port <= 65535:
             raise ValueError("Invalid monitor port")
         if not 1 <= self.cli_timeout <= 30 or not self.cli_timeout <= self.outer_timeout <= 40:
@@ -48,6 +53,7 @@ class Settings:
         return cls(
             executable=os.environ.get("AGY_OBSERVER_CLI", "agy"),
             model=os.environ.get("AGY_OBSERVER_MODEL", "gemini-3.8-flash-low"),
+            claude_model=os.environ.get("AGY_OBSERVER_CLAUDE_MODEL", "claude-sonnet-4-6"),
             state_dir=state_dir.expanduser().resolve(),
             workspace=Path(workspace).expanduser().resolve() if workspace else None,
             enabled=os.environ.get("AGY_OBSERVER_ENABLED") == "1",

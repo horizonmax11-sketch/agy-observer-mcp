@@ -14,6 +14,7 @@ nav{padding:16px;border-right:1px solid #2a3440;display:flex;flex-direction:colu
 #runs,#sessions{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-top:12px}
 select{width:100%;font:inherit;color:inherit;background:#171f29;padding:8px;border:1px solid #415b76;margin:6px 0}
 .message{border:1px solid #354557;border-left:3px solid #78b9ff;padding:16px;margin:16px 0}.message.lead{border-left-color:#74c8a1}.message pre{max-height:360px;overflow:auto;margin-top:8px}.message small{display:block;overflow-wrap:anywhere}
+.message.gpt{border-left-color:#74c8a1}.message.claude{border-left-color:#d6a1ef}.message.plan{border:2px solid #b9bb7b}
 label{display:block;padding:8px 0;color:#a6b3c3}input{accent-color:#78b9ff}
 button{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:inherit;padding:12px;margin-bottom:8px;border-radius:4px;font:inherit;cursor:pointer;white-space:pre-wrap}
 button:hover,button[aria-current=true]{background:#202d3c;border-color:#415b76}
@@ -25,6 +26,7 @@ pre{font:14px/1.65 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywher
 .badge{display:inline-block;background:#244669;color:#d8ecff;padding:3px 10px;border-radius:4px;margin-right:10px}
 #kind{color:#a6b3c3}#warning{color:#f6d293}summary{cursor:pointer;color:#a6b3c3;padding:16px 0}
 dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{margin:0;overflow-wrap:anywhere}
+#roles{grid-template-columns:120px 1fr}#roles dt{white-space:nowrap}
 #events{max-height:340px;overflow:auto}
 #goal{max-height:120px;overflow:auto;overflow-wrap:anywhere}
 @media(max-width:720px){
@@ -42,7 +44,7 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
   <div id="runs"></div><div id="sessions" hidden></div>
  </nav>
  <article>
- <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><dl id="roles"></dl><p class="muted" id="discussion-help">绿色：主维护者（客户端提交，身份未经验证）；蓝色：审阅者（CLI模型返回）。每次审阅均为显式调用，不会自动讨论。</p><div id="questions"></div><div id="messages"></div></section>
+ <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><dl id="roles"></dl><p class="muted" id="discussion-help">每轮均由客户端显式发起。</p><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
  <section id="single">
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
   <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
@@ -120,30 +122,36 @@ async function updateHistory(){
 }
 el('show-tests').onchange=()=>{pinned=false;el('runs').scrollTop=0;if(el('view').value==='runs')updateHistory().catch(fail)};
 el('details').ontoggle=()=>{if(el('details').open)renderDetail().catch(fail)};
-const messageKinds={proposal:'方案',feedback:'反馈',decision:'决定',summary:'归档',review:'审阅',contribution:'发言',question:'提问',answer:'回应问题',challenge:'质疑',revision:'修正观点'};
+const messageKinds={proposal:'方案',feedback:'反馈',decision:'决定',summary:'归档',review:'审阅',contribution:'发言',question:'提问',answer:'回应问题',challenge:'质疑',revision:'修正观点',initial:'独立初判',plan:'共同方案草案',observation:'补充观察',evidence:'补充依据',support:'有依据的支持',pass:'暂无新增信息'};
 const resolutions={accepted:'采纳',rejected:'拒绝',deferred:'暂缓'};
 function fillDiscussion(data){
- const peer=data.protocol==='peer-v1',who=author=>peer?(author==='lead'?'伙伴A':'伙伴B'):(author==='lead'?'主维护者':'审阅者');
- txt('discussion-help',isTest(data)?'离线模拟：全部为预设内容，未调用模型。':peer?'双方都可主动开题、提问、补证、反驳和修正自己。绿色是客户端伙伴，蓝色是模型伙伴；答复不等于对方已认可。':'绿色：主维护者（客户端提交）；蓝色：审阅者（CLI模型返回）。');
- txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':'进行中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}`);
+ const council=data.protocol==='council-v1',peer=data.protocol==='peer-v1',who=author=>council?({gpt:'GPT（客户端）',gemini:'Gemini',claude:'Claude'}[author]||author):peer?(author==='lead'?'伙伴A':'伙伴B'):(author==='lead'?'主维护者':'审阅者');
+ txt('discussion-help',isTest(data)?'离线模拟：全部为预设内容，未调用模型。':council?'三方平等参与。首轮仅接收原始材料，收齐后公开；随后共同修改一份方案。支持或回答不等于验证，也不代表全员同意。身份标签表示请求来源，客户端声明未经认证。':peer?'双方都可主动开题、提问、补证、反驳和修正自己。绿色是客户端伙伴，蓝色是模型伙伴；答复不等于对方已认可。':'绿色：主维护者（客户端提交）；蓝色：审阅者（CLI模型返回）。');
+ txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · Gemini '+data.attempts.gemini+'/'+data.max_turns_per_model+' · Claude '+data.attempts.claude+'/'+data.max_turns_per_model:''}`);
  el('roles').replaceChildren();
  for(const [role,brief] of Object.entries(data.roles)){
   const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=who(role);dd.textContent=brief;el('roles').append(dt,dd);
  }
+ el('shared-plan').replaceChildren();
+ const plan=council?[...data.messages].reverse().find(m=>m.kind==='plan'):null;
+ if(plan){const title=document.createElement('h2'),body=document.createElement('pre'),note=document.createElement('p');title.textContent='当前共同方案草案 · v'+plan.plan_version;body.textContent=plan.content;note.className='muted';note.textContent='整合于 #'+plan.id+'，来源 '+(plan.references||[]).map(i=>'#'+i).join('、')+'。此草案不自动代表三方认可；具体异议保留在下方。';el('shared-plan').append(title,body,note)}
+ if(council&&data.phase==='collect'){const p=document.createElement('p');p.textContent='初判收集：'+Object.entries(data.initial_status||{}).map(([author,state])=>who(author)+' '+(states[state]||({missing:'尚未提交',interrupted:'已中断'}[state]||state))).join('；')+'。'+(data.reveal_ready?'已收齐，等待客户端显式公开。':'三份初判成功后才可公开；超时不视为收齐。')+'封存不限制本机操作者访问运行文件。';el('shared-plan').append(p)}
+ if(council&&data.budget_exhausted){const p=document.createElement('p');p.className='muted';p.textContent='双方模型次数已用尽。可以继续记录修订、未决选项或归档；不会自动追加请求或按多数票裁决。';el('shared-plan').append(p)}
  el('questions').replaceChildren();
  const pending=data.open_questions||[];
  if(pending.length){
-  const title=document.createElement('h2');title.textContent='等待双方接住的问题';el('questions').append(title);
-  for(const q of pending){const p=document.createElement('p');p.textContent=`${who(q.author)} #${q.message_id} → ${who(q.author==='lead'?'reviewer':'lead')}：${q.question}`;el('questions').append(p)}
+  const title=document.createElement('h2');title.textContent='等待回应的问题';el('questions').append(title);
+  for(const q of pending){const p=document.createElement('p');p.textContent=`${who(q.author)} #${q.message_id}：${q.question}`;el('questions').append(p)}
   if(data.closed){const p=document.createElement('p');p.textContent='归档时这些问题仍未明确回应，不能视为已经达成共识。';el('questions').append(p)}
  }
  el('messages').replaceChildren();
  for(const row of data.messages){
-  const card=document.createElement('section');card.className='message '+row.author;card.id='message-'+row.id;
+  const card=document.createElement('section');card.className='message '+row.author+(row.kind==='plan'?' plan':'');card.id='message-'+row.id;
   const title=document.createElement('strong');title.textContent=`#${row.id} ${who(row.author)} · ${messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
   const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'我方取舍：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');card.append(reference);
   if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮要求：'+row.instruction;card.append(instruction)}
   const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||'等待公开回复；此轮尚未验收。';card.append(content);
+  for(const [label,value] of [['引用发言',(row.references||[]).map(i=>'#'+i).join('、')],['依据（需核验）',row.evidence],['修正原因',row.change_reason],['首轮上下文',row.initial_context?({fresh:'新上下文；客户端提交项为声明',history_visible:'已看过历史',unknown:'未确认'}[row.initial_context]||row.initial_context):'']]){if(value){const p=document.createElement('p');p.textContent=label+'：'+value;card.append(p)}}
   if(row.question&&row.kind!=='question'){const q=document.createElement('p');q.textContent='向对方提问：'+row.question;card.append(q)}
   if(row.answers_to?.length){const a=document.createElement('small');a.textContent='明确回应问题：'+row.answers_to.map(i=>'#'+i).join('、');card.append(a)}
   if(row.protocol_warning){const w=document.createElement('small');w.textContent=row.protocol_warning;card.append(w)}
@@ -165,13 +173,13 @@ async function updateDiscussions(rows){
  }
  if(!visible.some(row=>row.discussion_id===selectedDiscussion)){selectedDiscussion=visible[0]?.discussion_id;discussionKey=null}
  for(const [id,button] of sessionButtons)button.setAttribute('aria-current',id===selectedDiscussion);
- if(!selectedDiscussion){discussionKey=null;discussionData=null;txt('goal','暂无协作任务');txt('discussion-state','暂无记录');txt('discussion-help','创建共同目标后，任一伙伴都可以先开题。');el('roles').replaceChildren();el('questions').replaceChildren();el('messages').replaceChildren();return}
+ if(!selectedDiscussion){discussionKey=null;discussionData=null;txt('goal','暂无协作任务');txt('discussion-state','暂无记录');txt('discussion-help','创建共同目标后，任一伙伴都可以先开题。');el('roles').replaceChildren();el('shared-plan').replaceChildren();el('questions').replaceChildren();el('messages').replaceChildren();return}
  const row=visible.find(row=>row.discussion_id===selectedDiscussion),id=selectedDiscussion,key=id+':'+row.updated_utc;
  if(key!==discussionKey){
   const data=await read('/api/discussions/'+encodeURIComponent(id));if(id!==selectedDiscussion||el('view').value!=='discussions')return;
   discussionData=data;fillDiscussion(data);discussionKey=key;
  }
- for(const message of discussionData.messages.filter(m=>m.state==='running'&&m.run_id)){
+ for(const message of discussionData.messages.filter(m=>m.state==='running'&&m.run_id&&!m.sealed)){
   const status=await read('/api/status/'+encodeURIComponent(message.run_id));if(id!==selectedDiscussion||el('view').value!=='discussions')return;
   txt('message-content-'+message.id,(status.response||'等待公开回复…')+'\n\n实时预览：'+(states[status.state]||status.state)+'；协作记录尚待终态确认。');
  }

@@ -55,6 +55,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                                 "agy_discussion_note",
                                 "agy_discussion_turn",
                                 "agy_discussion_recover",
+                                "agy_council_create",
+                                "agy_council_note",
+                                "agy_council_round",
+                                "agy_council_reveal",
                             ]
                         ),
                     )
@@ -93,4 +97,26 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     loaded = await session.call_tool(
                         "agy_discussion_read", {"discussion_id": identifier}
                     )
+                    self.assertEqual(json.loads(loaded.content[0].text)["model_attempts"], 0)
+                    created = await session.call_tool(
+                        "agy_council_create", {"goal": "synthetic council"}
+                    )
+                    identifier = json.loads(created.content[0].text)["discussion_id"]
+                    noted = await session.call_tool(
+                        "agy_council_note",
+                        {
+                            "discussion_id": identifier,
+                            "kind": "initial",
+                            "content": "SEALED SYNTHETIC",
+                        },
+                    )
+                    self.assertNotIn("SEALED SYNTHETIC", json.dumps(noted.model_dump()))
+                    denied = await session.call_tool(
+                        "agy_council_round", {"discussion_id": identifier}
+                    )
+                    self.assertTrue(denied.isError)
+                    loaded = await session.call_tool(
+                        "agy_discussion_read", {"discussion_id": identifier}
+                    )
+                    self.assertNotIn("SEALED SYNTHETIC", json.dumps(loaded.model_dump()))
                     self.assertEqual(json.loads(loaded.content[0].text)["model_attempts"], 0)

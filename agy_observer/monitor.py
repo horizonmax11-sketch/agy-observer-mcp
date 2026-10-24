@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from .history import History
 from .discussions import Discussions
+from .council import public
 
 
 class Monitor:
@@ -54,7 +55,8 @@ class Monitor:
                         kind = "application/json; charset=utf-8"
                     elif re.fullmatch(r"/api/discussions/[A-Za-z0-9_-]{1,100}", path):
                         body = json.dumps(
-                            monitor.discussions.read(path.rsplit("/", 1)[-1]), ensure_ascii=False
+                            public(monitor.discussions.read(path.rsplit("/", 1)[-1])),
+                            ensure_ascii=False,
                         ).encode()
                         kind = "application/json; charset=utf-8"
                     elif path == "/api/runs":

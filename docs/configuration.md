@@ -5,6 +5,7 @@
 | `AGY_OBSERVER_ENABLED` | `0`；只有精确的`1`启用执行 |
 | `AGY_OBSERVER_CLI` | `agy`，也可以是CLI绝对路径 |
 | `AGY_OBSERVER_MODEL` | `gemini-3.8-flash-low` |
+| `AGY_OBSERVER_CLAUDE_MODEL` | `claude-sonnet-4-6`；三方协作中的另一独立请求模型 |
 | `AGY_OBSERVER_WORKSPACE` | 无默认；执行时必须指向现有目录，建议空目录 |
 | `AGY_OBSERVER_STATE_DIR` | Linux/macOS按XDG state路径；Windows按LOCALAPPDATA |
 | `AGY_OBSERVER_PORT` | `0`，由操作系统选择空闲loopback端口 |
@@ -13,6 +14,8 @@
 | `AGY_OBSERVER_CLI_XDG_CONFIG_HOME` 等 | 可选，CONFIG/CACHE/DATA/STATE各自指向已有CLI路径 |
 
 CLI子进程只继承常见系统/用户会话环境及上述明确路径，不透传API密钥类环境变量。凭据由官方CLI按照其正常机制使用，桥接服务自身不读凭据内容。
+
+三方模式中 `AGY_OBSERVER_MODEL` 对应 Gemini，`AGY_OBSERVER_CLAUDE_MODEL` 对应 Claude。先用官方 `agy models` 核对当前账号可用名称；这两个名称来自实际列表，并非跨账号保证。模型名称必须不同；真实服务端身份与供应商额度不由本桥接层认证。独立调用使用已有同一 CLI 登录，不复制认证资料。
 
 ## Windows与WSL
 

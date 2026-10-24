@@ -2,7 +2,7 @@
 
 让 MCP 客户端调用 Antigravity CLI，并在本地窗口查看提问、公开回复和运行状态。
 
-每次调用保存一份记录，可在本地窗口查看。 仅依赖 MCP Python SDK 与标准库，无需完整 PAL 环境或前端构建工具。当前版本 **0.4.0 Alpha**。
+每次调用保存一份记录，可在本地窗口查看。 仅依赖 MCP Python SDK 与标准库，无需完整 PAL 环境或前端构建工具。当前版本 **0.5.0 Alpha**。
 
 ![界面预览：图中内容为离线模拟](docs/demo.png)
 
@@ -12,7 +12,7 @@
 
 - **直观查看对话**：调用前请求打开本地窗口，流式显示公开回复、警告信息与真实终态。
 - **历史便于浏览**：左侧历史列表与右侧对话区域独立滚动；离线测试与模拟记录默认隐藏。
-- **按需启用执行**：默认关闭模型执行；同一时间只允许一个模型调用，不自动重试或切换模型。
+- **按需启用执行**：默认关闭模型执行；三方模式允许 Gemini、Claude 各一次并发，独立预算，不自动重试或切换模型。
 - **保留公开记录**：每次调用均保存状态、公开事件和 Markdown 格式对话记录。
 - **按需读取详情**：列表仅拉取摘要；完整对话按选中项加载，事件明细展开后才读取。
 
@@ -65,38 +65,33 @@ python3 -m venv .venv
 
 默认请求模型为 `gemini-3.8-flash-low`，实际可用性取决于账号权限与 CLI 配置。完整环境变量说明、WSL 配置指引及故障排查请参阅 [配置参考](docs/configuration.md)。另可参考 [通用 JSON 配置](examples/mcp.json) 与 [Codex TOML 配置](examples/codex-config.toml)。
 
-## 协作任务：两方互相找补
+## 三方协作：独立判断，共同制定方案
 
-双方都能开题、提问、提出方案、反驳、补证和修正自己。客户端伙伴负责可执行修改与测试，模型伙伴发挥独立推理优势；这些专长不限制发言权，也不代表上下级。
+GPT、Gemini、Claude 平等参与，先各自提交简短初判，再围绕证据共同完善一份方案。关注角度可以轮换；不固定谁只能创新或审阅，不以相互赞同或多数票代替验证。
 
-例如：模型先指出问题并反问 → 客户端回答并质疑模型的前提 → 模型补证或修正 → 客户端据此修改方案。尚未回答的问题会保留；归档时仍有分歧，也会明确显示，不把沉默当成同意。
+1. **相同起点**：创建原始目标和事实，GPT 使用新上下文提交简短初判。
+2. **首轮隔离**：Gemini、Claude 经 Antigravity 分别调用，可同时运行；提示词不含彼此或 GPT 的首轮观点。三份完成后一起公开。
+3. **增量交流**：补充新角度、反例、依据或问题；修正需说明原因，没有新增信息可以不再发言。
+4. **一份共同草案**：保留来源、版本和修改原因，任何参与者都能质疑；未决问题不会因归档被抹去。
 
-| 工具 | 作用 | 启动模型 |
+| 工具 | 用途 | 启动模型 |
 | --- | --- | --- |
-| `agy_discussion_create(goal, lead_brief, reviewer_brief, max_model_turns=4)` | 创建共同目标、互补专长及1–8次尝试上限；职责有默认值 | 否 |
-| `agy_discussion_turn(discussion_id, instruction="", reply_to)` | 交给对方一个话轮；可不指定问题，让对方先开题 | 开关开启时，是 |
-| `agy_discussion_note(discussion_id, content, kind, reply_to, resolution)` | 记录客户端伙伴的发言、提问、回应、质疑、修正和归档 | 否 |
-| `agy_discussion_read(discussion_id)` | 省略编号列任务摘要；指定编号查看发言、待答问题与来源 | 否 |
-| `agy_discussion_recover(discussion_id)` | 对齐中断调用的真实终态，不重发请求 | 否 |
+| `agy_council_create` | 建立三方目标、原始材料和独立次数预算，默认各两次 | 否 |
+| `agy_council_note` | 记录 GPT 初判、公开发言、带版本的共同草案或归档 | 否 |
+| `agy_council_round` | 默认 Gemini、Claude 各一次并发；也可只选一位 | 开关开启时，是 |
+| `agy_council_reveal` | 收齐三份初判后公开，转入讨论 | 否 |
+| `agy_discussion_read` / `agy_discussion_recover` | 查看记录或恢复中断终态，不重发 | 否 |
 
-建议流程：
+GPT 由 MCP 客户端参与，本服务不另行调用 GPT API。客户端已经看过历史时，必须如实标记；首轮封存是工作流程，不限制本机操作者读取运行文件。两位模型的请求名称和运行编号可查，但不构成服务端身份或供应商额度认证。
 
-1. 创建共同目标，不要求客户端先提交方案。
-2. 调用 `agy_discussion_turn`，可省略 `instruction`，让模型伙伴自行选择值得推进的问题。
-3. 查看返回的 `contribution.question`。客户端若回应这个问题，提交 `kind="answer"` 并以 `reply_to` 指向该消息；也可记录 `challenge` 或 `revision`。
-4. 客户端自己提问使用 `kind="question"`；下一次交接话轮会带上待答问题，模型通过 `answers_to` 明确关联其回应。
-5. 达到阶段目标或次数上限时，可用 `kind="summary"` 归档；归档保留未解决问题，不代表双方已经同意。
+完整参数、示例、上下文限制及评估方法见 [三方协作机制](docs/council.md)。原有五个双方协作工具保持兼容，见 [双方协作](docs/collaboration.md)。每轮由客户端显式调度，无自动讨论循环。
 
-`proposal`、`feedback`、`decision` 仍可使用；`decision` 仅表示客户端自己的取舍，需有引用、理由及 `accepted` / `rejected` / `deferred`，不能代替另一方表态。
+离线预览（不调用模型）：
 
-客户端仍负责调用调度，因为 CLI 模型不能自行唤醒 MCP。每次交接只发起一次请求，不自动循环或重试。每轮携带的消息与待答问题有明确限额，省略编号会展示，原始问题不会被删除。详见 [协作机制](docs/collaboration.md)。
-
-![双方互相补充的离线演示](docs/collaboration.png)
-
-离线演示（不调用模型）：
+![三方协作界面，全部内容为离线模拟](docs/collaboration.png)
 
 ```sh
-python -m agy_observer.demo --collaboration --state-dir ./state --port 8766 --open
+python -m agy_observer.demo --council --state-dir ./state --port 8766 --open
 ```
 
 ## 使用方式
@@ -136,6 +131,6 @@ runs/<run_id>/
 
 ## 来源与许可证
 
-本项目基于对 PAL MCP Server 的本地化适配成果整理重构，保留完整的 [来源与改动说明](NOTICE)，采用 [Apache-2.0 许可证](LICENSE)。本项目非 Google、PAL 或 OpenAI 官方产品。
+本项目基于对 PAL MCP Server 的本地化适配成果整理重构，保留完整的 [来源与改动说明](NOTICE)，采用 [Apache-2.0 许可证](LICENSE)。本项目非 Google、Anthropic、PAL 或 OpenAI 官方产品。
 
 参考文档：[Antigravity Headless 事件规范](https://antigravity.google/docs/cli/headless/) · [MCP Python SDK 仓库](https://github.com/modelcontextprotocol/python-sdk)。
