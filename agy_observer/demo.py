@@ -19,48 +19,66 @@ async def preview(args):
         await monitor.open(include_tests=True, view="discussions" if args.collaboration else None)
     if args.collaboration:
         discussions = Discussions(args.state_dir)
+        import json
+
         task = discussions.create(
-            "离线协作演示：让代码审阅形成反馈闭环",
-            "负责方案、实现、测试并记录取舍。",
-            "检查缺陷和证据，逐点回应反馈。",
+            "离线演示：双方主动提问、补证和修正观点",
+            "共同提出方案和问题，负责可执行验证。",
+            "共同提出方案和问题，独立质疑并修正自己。",
             2,
             kind="离线模拟协作",
         )
         identifier = task["discussion_id"]
-        discussions.note(
-            identifier,
-            "方案：历史列表只保留摘要，详情按需加载。请检查是否会丢失完整回复。",
-            "proposal",
-        )
-        first, _ = discussions.reserve(identifier, "审阅方案并指出风险。", 1)
+        first, _ = discussions.reserve(identifier)
         discussions.finish(
             identifier,
             first,
             "success",
-            "离线模拟回复：建议保留完整 status，并测试摘要不含 response、详情仍可读取。",
+            json.dumps(
+                dict(
+                    message="模拟发言：我先提出一个担忧：未答问题可能累积，占满上下文。我的初步方案是超时就归并为冲突。",
+                    question="你有哪些证据证明未答问题一定是双方冲突？",
+                    answers_to=[],
+                ),
+                ensure_ascii=False,
+            ),
         )
         discussions.note(
             identifier,
-            "已保留完整状态。请进一步审阅缓存失效条件；此处全部是模拟内容。",
-            "feedback",
+            "没有这样的证据。未答也可能来自材料不足或额度耗尽，不能据此判定冲突。",
+            "answer",
             first,
         )
-        second, _ = discussions.reserve(identifier, "回应缓存失效反馈。", 3)
+        discussions.note(
+            identifier,
+            "我不同意自动归并：这可能抹去原问题和少数意见。建议保留原文，显式列出本轮省略项。",
+            "challenge",
+            first,
+        )
+        discussions.note(
+            identifier,
+            "如果次数用尽仍有分歧，你是否愿意保留未解决，而不是强行产出共识？",
+            "question",
+            first,
+        )
+        second, _ = discussions.reserve(identifier)
         discussions.finish(
             identifier,
             second,
             "success",
-            "离线模拟回复：使用文件签名识别变化，补充终态更新测试；我没有实际修改或运行代码。",
+            json.dumps(
+                dict(
+                    message="模拟发言：我修正“未答即冲突”的判断。愿意保留未解决并列出证据缺口；上下文筛选不能等同删除问题。",
+                    question=None,
+                    answers_to=[4],
+                ),
+                ensure_ascii=False,
+            ),
         )
         discussions.note(
             identifier,
-            "采纳缓存失效测试建议，具体实现与测试由主维护者负责。",
-            "decision",
-            second,
-            "accepted",
-        )
-        discussions.note(
-            identifier, "离线演示完成：分工、引用、反馈、决定均可追踪；没有模型请求。", "summary"
+            "离线归档：展示了对方先开题、我方回应与质疑、对方修正。全部为模拟，未调用模型。",
+            "summary",
         )
     else:
         record = RunRecord(

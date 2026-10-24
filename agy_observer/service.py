@@ -157,7 +157,7 @@ class Service:
         finally:
             self.active.pop(record.run_id, None)
 
-    async def discussion_turn(self, discussion_id, instruction, reply_to=None):
+    async def discussion_turn(self, discussion_id, instruction="", reply_to=None):
         if self.closing or not self.settings.enabled:
             raise ValueError("Model execution is disabled or server is shutting down")
         if self.active:
@@ -182,6 +182,7 @@ class Service:
         return dict(
             discussion_id=discussion_id,
             message_id=message_id,
+            contribution=data["messages"][-1],
             model_attempts=data["model_attempts"],
             max_model_turns=data["max_model_turns"],
             **result,
@@ -191,6 +192,21 @@ class Service:
         data = self.discussions.read(discussion_id)
         for message in data["messages"]:
             if message.get("state") != "running":
+                if (
+                    data.get("protocol") == "peer-v1"
+                    and message.get("state") == "success"
+                    and message.get("format") == "plain-text"
+                    and message.get("run_id")
+                ):
+                    status = self.history.status(message["run_id"])
+                    if status["state"] == "success":
+                        data = self.discussions.finish(
+                            discussion_id,
+                            message["id"],
+                            "success",
+                            status["response"],
+                            normalize_only=True,
+                        )
                 continue
             run_id = message.get("run_id")
             if run_id in self.active:

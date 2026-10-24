@@ -26,6 +26,7 @@ pre{font:14px/1.65 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywher
 #kind{color:#a6b3c3}#warning{color:#f6d293}summary{cursor:pointer;color:#a6b3c3;padding:16px 0}
 dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{margin:0;overflow-wrap:anywhere}
 #events{max-height:340px;overflow:auto}
+#goal{max-height:120px;overflow:auto;overflow-wrap:anywhere}
 @media(max-width:720px){
  main{grid-template-columns:1fr;grid-template-rows:150px minmax(0,1fr)}
  nav{padding:8px 16px;border-right:0;border-bottom:1px solid #2a3440}nav>.muted{display:none}
@@ -41,7 +42,7 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
   <div id="runs"></div><div id="sessions" hidden></div>
  </nav>
  <article>
- <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><dl id="roles"></dl><p class="muted" id="discussion-help">绿色：主维护者（客户端提交，身份未经验证）；蓝色：审阅者（CLI模型返回）。每次审阅均为显式调用，不会自动讨论。</p><div id="messages"></div></section>
+ <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><dl id="roles"></dl><p class="muted" id="discussion-help">绿色：主维护者（客户端提交，身份未经验证）；蓝色：审阅者（CLI模型返回）。每次审阅均为显式调用，不会自动讨论。</p><div id="questions"></div><div id="messages"></div></section>
  <section id="single">
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
   <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
@@ -119,28 +120,39 @@ async function updateHistory(){
 }
 el('show-tests').onchange=()=>{pinned=false;el('runs').scrollTop=0;if(el('view').value==='runs')updateHistory().catch(fail)};
 el('details').ontoggle=()=>{if(el('details').open)renderDetail().catch(fail)};
-const messageKinds={proposal:'方案',feedback:'反馈',decision:'决定',summary:'总结',review:'审阅'};
+const messageKinds={proposal:'方案',feedback:'反馈',decision:'决定',summary:'归档',review:'审阅',contribution:'发言',question:'提问',answer:'回应问题',challenge:'质疑',revision:'修正观点'};
 const resolutions={accepted:'采纳',rejected:'拒绝',deferred:'暂缓'};
 function fillDiscussion(data){
- txt('discussion-help',isTest(data)?'离线模拟：此任务全部为预设内容，未调用模型。绿色表示主维护者，蓝色表示模拟审阅者。':'绿色：主维护者（客户端提交，身份未经验证）；蓝色：审阅者（CLI模型返回）。每次审阅均为显式调用，不会自动讨论。');
- txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已总结':'进行中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}`);
+ const peer=data.protocol==='peer-v1',who=author=>peer?(author==='lead'?'伙伴A':'伙伴B'):(author==='lead'?'主维护者':'审阅者');
+ txt('discussion-help',isTest(data)?'离线模拟：全部为预设内容，未调用模型。':peer?'双方都可主动开题、提问、补证、反驳和修正自己。绿色是客户端伙伴，蓝色是模型伙伴；答复不等于对方已认可。':'绿色：主维护者（客户端提交）；蓝色：审阅者（CLI模型返回）。');
+ txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':'进行中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}`);
  el('roles').replaceChildren();
  for(const [role,brief] of Object.entries(data.roles)){
-  const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=role==='lead'?'主维护者':'审阅者';dd.textContent=brief;el('roles').append(dt,dd);
+  const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=who(role);dd.textContent=brief;el('roles').append(dt,dd);
+ }
+ el('questions').replaceChildren();
+ const pending=data.open_questions||[];
+ if(pending.length){
+  const title=document.createElement('h2');title.textContent='等待双方接住的问题';el('questions').append(title);
+  for(const q of pending){const p=document.createElement('p');p.textContent=`${who(q.author)} #${q.message_id} → ${who(q.author==='lead'?'reviewer':'lead')}：${q.question}`;el('questions').append(p)}
+  if(data.closed){const p=document.createElement('p');p.textContent='归档时这些问题仍未明确回应，不能视为已经达成共识。';el('questions').append(p)}
  }
  el('messages').replaceChildren();
  for(const row of data.messages){
   const card=document.createElement('section');card.className='message '+row.author;card.id='message-'+row.id;
-  const title=document.createElement('strong');title.textContent=`#${row.id} ${row.author==='lead'?'主维护者':'审阅者'} · ${messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
-  const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');card.append(reference);
+  const title=document.createElement('strong');title.textContent=`#${row.id} ${who(row.author)} · ${messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
+  const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'我方取舍：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');card.append(reference);
   if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮要求：'+row.instruction;card.append(instruction)}
   const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||'等待公开回复；此轮尚未验收。';card.append(content);
+  if(row.question&&row.kind!=='question'){const q=document.createElement('p');q.textContent='向对方提问：'+row.question;card.append(q)}
+  if(row.answers_to?.length){const a=document.createElement('small');a.textContent='明确回应问题：'+row.answers_to.map(i=>'#'+i).join('、');card.append(a)}
+  if(row.protocol_warning){const w=document.createElement('small');w.textContent=row.protocol_warning;card.append(w)}
   if(row.error){const error=document.createElement('p');error.textContent='错误：'+row.error;card.append(error)}
   if(row.content_truncated){const note=document.createElement('small');note.textContent='此处为回复摘录，完整内容请用 agy_status 查询上方调用编号。';card.append(note)}
   if(row.context){const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent='本轮共享上下文';pre.textContent=JSON.stringify(row.context,null,2);details.append(summary,pre);card.append(details)}
   el('messages').append(card);
  }
- if(!data.messages.length){const p=document.createElement('p');p.textContent='尚无消息。先提交主维护者方案，再请求审阅。';el('messages').append(p)}
+ if(!data.messages.length){const p=document.createElement('p');p.textContent='尚无发言。任一伙伴都可以先开题，不要求客户端先交方案。';el('messages').append(p)}
 }
 async function updateDiscussions(rows){
  const visible=rows.filter(row=>el('show-tests').checked||!isTest(row));
@@ -149,11 +161,11 @@ async function updateDiscussions(rows){
  for(let index=0;index<rows.length;index++){
   const row=rows[index];let button=sessionButtons.get(row.discussion_id);
   if(!button){button=document.createElement('button');button.type='button';button.onclick=()=>{selectedDiscussion=row.discussion_id;discussionKey=null};sessionButtons.set(row.discussion_id,button);el('sessions').insertBefore(button,el('sessions').children[index]||null)}
-  button.hidden=!visible.includes(row);const label=`${row.closed?'已总结':'协作中'} · ${row.model_attempts}/${row.max_model_turns}次尝试\n${row.goal_preview}`;if(button.textContent!==label)button.textContent=label;
+  button.hidden=!visible.includes(row);const label=`${row.closed?'已归档':'协作中'} · 待答${row.open_questions_count||0} · ${row.model_attempts}/${row.max_model_turns}次尝试\n${row.goal_preview}`;if(button.textContent!==label)button.textContent=label;
  }
  if(!visible.some(row=>row.discussion_id===selectedDiscussion)){selectedDiscussion=visible[0]?.discussion_id;discussionKey=null}
  for(const [id,button] of sessionButtons)button.setAttribute('aria-current',id===selectedDiscussion);
- if(!selectedDiscussion){discussionKey=null;discussionData=null;txt('goal','暂无协作任务');txt('discussion-state','暂无记录');txt('discussion-help','创建协作目标，提交主维护者方案后再请求审阅。');el('roles').replaceChildren();el('messages').replaceChildren();return}
+ if(!selectedDiscussion){discussionKey=null;discussionData=null;txt('goal','暂无协作任务');txt('discussion-state','暂无记录');txt('discussion-help','创建共同目标后，任一伙伴都可以先开题。');el('roles').replaceChildren();el('questions').replaceChildren();el('messages').replaceChildren();return}
  const row=visible.find(row=>row.discussion_id===selectedDiscussion),id=selectedDiscussion,key=id+':'+row.updated_utc;
  if(key!==discussionKey){
   const data=await read('/api/discussions/'+encodeURIComponent(id));if(id!==selectedDiscussion||el('view').value!=='discussions')return;

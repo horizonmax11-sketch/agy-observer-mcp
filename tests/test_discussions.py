@@ -29,8 +29,6 @@ class DiscussionTests(unittest.TestCase):
         return self.store.note(self.identifier, "synthetic proposal", "proposal")
 
     def test_budget_roles_and_closed_summary(self):
-        with self.assertRaises(ValueError):
-            self.store.reserve(self.identifier, "no proposal yet")
         self.proposal()
         first, _ = self.store.reserve(self.identifier, "review", 1)
         self.store.finish(self.identifier, first, "failed", error="synthetic")
@@ -43,6 +41,101 @@ class DiscussionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "closed"):
             self.store.note(self.identifier, "late feedback")
         self.assertEqual(Discussions(self.temp.name).read(self.identifier), final)
+
+    def test_peer_can_open_and_client_can_answer(self):
+        message_id, prompt = self.store.reserve(self.identifier)
+        self.assertEqual(message_id, 1)
+        self.assertIn("对等协作伙伴", prompt)
+        data = self.store.finish(
+            self.identifier,
+            message_id,
+            "success",
+            json.dumps(
+                dict(
+                    message="alternative proposal",
+                    question="What evidence do you have?",
+                    answers_to=[],
+                )
+            ),
+        )
+        self.assertEqual(data["messages"][0]["kind"], "contribution")
+        self.assertEqual(data["open_questions"][0]["message_id"], 1)
+        data = self.store.note(self.identifier, "measured evidence", "answer", 1)
+        self.assertEqual(data["open_questions"], [])
+        self.assertEqual(data["messages"][-1]["answers_to"], [1])
+
+    def test_fenced_and_once_escaped_json_keep_answer_provenance(self):
+        self.store.note(self.identifier, "question?", "question")
+        message_id, _ = self.store.reserve(self.identifier)
+        body = json.dumps(
+            dict(
+                message='synthetic answer with "quotes" and path \\file',
+                question="counter?",
+                answers_to=[1],
+            )
+        )
+        escaped = json.dumps(body)[1:-1]
+        data = self.store.finish(
+            self.identifier, message_id, "success", "```json\\n" + escaped + "\\n```"
+        )
+        self.assertEqual(data["messages"][-1]["format"], "peer-json")
+        self.assertEqual(data["messages"][-1]["answers_to"], [1])
+        self.assertEqual(data["open_questions"][0]["message_id"], message_id)
+
+    def test_peer_answer_closes_only_explicit_question(self):
+        self.store.note(self.identifier, "client question?", "question")
+        self.store.note(self.identifier, "another question?", "question")
+        message_id, _ = self.store.reserve(self.identifier)
+        data = self.store.finish(
+            self.identifier,
+            message_id,
+            "success",
+            json.dumps(
+                dict(
+                    message="answer to first question", question="Counter-question?", answers_to=[1]
+                )
+            ),
+        )
+        self.assertEqual([q["message_id"] for q in data["open_questions"]], [2, 3])
+        # Merely replying is not recorded as an explicit answer.
+        self.store.note(self.identifier, "some feedback", "feedback", 3)
+        self.assertEqual(len(self.store.read(self.identifier)["open_questions"]), 2)
+        self.store.note(self.identifier, "bounded archive, still unresolved", "summary")
+        self.assertEqual(len(self.store.read(self.identifier)["open_questions"]), 2)
+
+    def test_invalid_peer_answers_do_not_invent_resolution(self):
+        self.store.note(self.identifier, "open question?", "question")
+        message_id, _ = self.store.reserve(self.identifier)
+        data = self.store.finish(
+            self.identifier,
+            message_id,
+            "success",
+            json.dumps(dict(message="invalid reference", question=None, answers_to=[99])),
+        )
+        self.assertEqual(len(data["open_questions"]), 1)
+        self.assertEqual(data["messages"][-1]["format"], "plain-text")
+        self.assertIn("protocol_warning", data["messages"][-1])
+        with self.assertRaisesRegex(ValueError, "other participant"):
+            self.store.note(self.identifier, "self-answer not peer reply", "answer", 1)
+
+    def test_question_context_is_bounded_without_losing_storage(self):
+        for index in range(8):
+            self.store.note(self.identifier, "question " + str(index), "question")
+        message_id, prompt = self.store.reserve(self.identifier, reply_to=8)
+        context = self.store.read(self.identifier)["messages"][message_id - 1]["context"]
+        self.assertIn(8, context["question_ids_included"])
+        self.assertEqual(len(context["question_ids_included"]), 4)
+        self.assertEqual(len(context["question_ids_omitted"]), 4)
+        self.assertEqual(len(self.store.read(self.identifier)["open_questions"]), 8)
+        self.assertLessEqual(len(prompt.encode("utf-16-le")) // 2, 16000)
+
+    def test_legacy_session_keeps_original_start_requirement(self):
+        path = self.store.file(self.identifier)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.pop("protocol")
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "proposal"):
+            self.store.reserve(self.identifier)
 
     def test_decisions_need_reference_disposition_and_reason(self):
         self.proposal()

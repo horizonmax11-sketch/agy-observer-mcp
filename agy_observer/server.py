@@ -58,11 +58,11 @@ def create_server(settings=None):
     )
     def agy_discussion_create(
         goal: str,
-        lead_brief: str = "负责方案、实现、测试和最终取舍；逐条记录对审阅意见的决定。",
-        reviewer_brief: str = "审阅证据、查找缺陷、质疑假设，逐点回应反馈并说明未验证项。",
+        lead_brief: str = "共同提出方案、追问、反驳与补证；负责可执行修改与测试，明确修正自己的判断。",
+        reviewer_brief: str = "共同提出方案、追问、反驳与补证；发挥独立推理优势，明确修正自己的判断。",
         max_model_turns: int = 4,
     ) -> dict:
-        """Create a local collaboration task with explicit lead/reviewer duties and 1..8 attempt budget. No model call."""
+        """Create a local peer collaboration task with complementary duties and 1..8 attempt budget. No model call."""
         return service.discussions.create(goal, lead_brief, reviewer_brief, max_model_turns)
 
     @app.tool(
@@ -86,7 +86,7 @@ def create_server(settings=None):
         reply_to: int | None = None,
         resolution: str | None = None,
     ) -> dict:
-        """Submit a lead proposal/feedback/decision/summary. Decisions require reply_to and accepted/rejected/deferred; summary closes the task. Client authorship is not authenticated. No model call."""
+        """Submit a client proposal/question/answer/challenge/revision/feedback/decision/summary. An answer must reference the peer question. Decisions require reply_to and accepted/rejected/deferred; summary closes the task. Client authorship is not authenticated. No model call."""
         return service.discussions.note(discussion_id, content, kind, reply_to, resolution)
 
     @app.tool(
@@ -95,9 +95,9 @@ def create_server(settings=None):
         )
     )
     async def agy_discussion_turn(
-        discussion_id: str, instruction: str, reply_to: int | None = None
+        discussion_id: str, instruction: str = "", reply_to: int | None = None
     ) -> dict:
-        """Request ONE authorized reviewer call using bounded shared context. Failure/cancellation consumes an attempt; no automatic turns/retries. May incur cost and CLI side effects."""
+        """Yield ONE authorized peer turn using bounded shared context. Instruction is optional; the peer may initiate questions or proposals, including the first turn. Failure/cancellation consumes an attempt; no automatic turns/retries. May incur cost and CLI side effects."""
         return await service.discussion_turn(discussion_id, instruction, reply_to)
 
     @app.tool(

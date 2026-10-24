@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agy-observer-mcp"
-version = "0.3.0"
+version = "0.4.0"
 description = "An opt-in Antigravity CLI MCP bridge with a visible local conversation history"
 readme = "README.md"
 requires-python = ">=3.10"

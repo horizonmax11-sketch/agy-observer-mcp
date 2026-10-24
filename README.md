@@ -2,7 +2,7 @@
 
 让 MCP 客户端调用 Antigravity CLI，并在本地窗口查看提问、公开回复和运行状态。
 
-每次调用保存一份记录，可在本地窗口查看。 仅依赖 MCP Python SDK 与标准库，无需完整 PAL 环境或前端构建工具。当前版本 **0.3.0 Alpha**。
+每次调用保存一份记录，可在本地窗口查看。 仅依赖 MCP Python SDK 与标准库，无需完整 PAL 环境或前端构建工具。当前版本 **0.4.0 Alpha**。
 
 ![界面预览：图中内容为离线模拟](docs/demo.png)
 
@@ -65,49 +65,35 @@ python3 -m venv .venv
 
 默认请求模型为 `gemini-3.8-flash-low`，实际可用性取决于账号权限与 CLI 配置。完整环境变量说明、WSL 配置指引及故障排查请参阅 [配置参考](docs/configuration.md)。另可参考 [通用 JSON 配置](examples/mcp.json) 与 [Codex TOML 配置](examples/codex-config.toml)。
 
-## 协作任务：从问答到审阅闭环
+## 协作任务：两方互相找补
 
-0.3 新增两方协作流程。主维护者由 MCP 客户端承担，负责方案、实现、测试与最终取舍；审阅者通过配置的 CLI 模型工作，负责检查问题、回应反馈并说明证据不足之处。职责可以在创建任务时调整。
+双方都能开题、提问、提出方案、反驳、补证和修正自己。客户端伙伴负责可执行修改与测试，模型伙伴发挥独立推理优势；这些专长不限制发言权，也不代表上下级。
 
-```mermaid
-sequenceDiagram
-    participant L as 主维护者（客户端）
-    participant D as 本地协作记录
-    participant G as 审阅者（CLI模型）
-    L->>D: 创建目标、职责和次数上限
-    L->>D: 提交方案
-    L->>G: 显式请求一次审阅（附共享上下文）
-    G->>D: 审阅意见及来源调用编号
-    L->>D: 反馈，引用具体消息
-    L->>G: 显式请求复审（可选）
-    G->>D: 对反馈逐点回应
-    L->>D: 记录采纳/拒绝/暂缓及理由，最后总结
-```
+例如：模型先指出问题并反问 → 客户端回答并质疑模型的前提 → 模型补证或修正 → 客户端据此修改方案。尚未回答的问题会保留；归档时仍有分歧，也会明确显示，不把沉默当成同意。
 
 | 工具 | 作用 | 启动模型 |
 | --- | --- | --- |
-| `agy_discussion_create(goal, lead_brief, reviewer_brief, max_model_turns=4)` | 创建目标、分工及1–8次尝试上限；两个职责字段有默认值 | 否 |
-| `agy_discussion_note(discussion_id, content, kind, reply_to, resolution)` | 主维护者提交方案、反馈、决定或总结 | 否 |
-| `agy_discussion_turn(discussion_id, instruction, reply_to)` | 带入共享上下文，显式请求一次审阅 | 开关开启时，是 |
-| `agy_discussion_read(discussion_id)` | 省略编号时列任务摘要；指定编号查看职责、消息、决定和调用 | 否 |
-| `agy_discussion_recover(discussion_id)` | 将中断记录与已有调用终态对齐；不重新请求模型 | 否 |
+| `agy_discussion_create(goal, lead_brief, reviewer_brief, max_model_turns=4)` | 创建共同目标、互补专长及1–8次尝试上限；职责有默认值 | 否 |
+| `agy_discussion_turn(discussion_id, instruction="", reply_to)` | 交给对方一个话轮；可不指定问题，让对方先开题 | 开关开启时，是 |
+| `agy_discussion_note(discussion_id, content, kind, reply_to, resolution)` | 记录客户端伙伴的发言、提问、回应、质疑、修正和归档 | 否 |
+| `agy_discussion_read(discussion_id)` | 省略编号列任务摘要；指定编号查看发言、待答问题与来源 | 否 |
+| `agy_discussion_recover(discussion_id)` | 对齐中断调用的真实终态，不重发请求 | 否 |
 
-最小流程：
+建议流程：
 
-1. `agy_discussion_create(goal="审阅历史缓存方案", max_model_turns=2)`，保存返回的 `discussion_id`。
-2. `agy_discussion_note(discussion_id, content="方案及待审阅材料……", kind="proposal")`。
-3. `agy_discussion_turn(discussion_id, instruction="指出缺陷、证据和建议", reply_to=1)`，这是一次模型调用。
-4. 提交 `kind="feedback"`，以 `reply_to` 引用审阅消息；按需再显式请求一次复审。
-5. 提交 `kind="decision"` 时必须引用已有消息，提供理由及 `resolution="accepted" / "rejected" / "deferred"`。
-6. 提交 `kind="summary"` 关闭任务；总结和完成判断由主维护者负责。
+1. 创建共同目标，不要求客户端先提交方案。
+2. 调用 `agy_discussion_turn`，可省略 `instruction`，让模型伙伴自行选择值得推进的问题。
+3. 查看返回的 `contribution.question`。客户端若回应这个问题，提交 `kind="answer"` 并以 `reply_to` 指向该消息；也可记录 `challenge` 或 `revision`。
+4. 客户端自己提问使用 `kind="question"`；下一次交接话轮会带上待答问题，模型通过 `answers_to` 明确关联其回应。
+5. 达到阶段目标或次数上限时，可用 `kind="summary"` 归档；归档保留未解决问题，不代表双方已经同意。
 
-页面切换“协作任务”后可查看双方时间线、分工与次数。客户端提交的身份未经验证；不会把人工笔记伪装成模型回复。模型状态中的成功只代表该次调用成功，不代表方案已获认可或代码已验证。
+`proposal`、`feedback`、`decision` 仍可使用；`decision` 仅表示客户端自己的取舍，需有引用、理由及 `accepted` / `rejected` / `deferred`，不能代替另一方表态。
 
-每次审阅使用新 CLI 调用，通过应用层共享上下文延续讨论。优先保留指定引用和最近决定，再带入近期消息；被截断、省略的编号会列在“本轮共享上下文”中。失败和取消同样占用尝试次数，不自动重试、加额度或继续下一轮。更多边界见 [协作机制](docs/collaboration.md)。
+客户端仍负责调用调度，因为 CLI 模型不能自行唤醒 MCP。每次交接只发起一次请求，不自动循环或重试。每轮携带的消息与待答问题有明确限额，省略编号会展示，原始问题不会被删除。详见 [协作机制](docs/collaboration.md)。
 
-![协作时间线（全部为离线模拟）](docs/collaboration.png)
+![双方互相补充的离线演示](docs/collaboration.png)
 
-离线演示（虚拟环境内运行，不调用模型）：
+离线演示（不调用模型）：
 
 ```sh
 python -m agy_observer.demo --collaboration --state-dir ./state --port 8766 --open
