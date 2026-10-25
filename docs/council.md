@@ -32,6 +32,8 @@ Gemini 和 Claude 分别通过配置的 Antigravity 模型调用。GPT 由 MCP �
 
 ## 按项目分工写提示词
 
+新项目推荐先传入`project`简报，三方理解并公开后再调用`agy_council_assign_roles`选择角色、生成提示词；同任务内可按阶段调整并保留历史。见[项目理解与动态分工](project-workflow.md)。以下`roles`方式用于兼容已有、预先确定职责的任务。
+
 创建时可传 `roles`，包含 `gpt`、`gemini`、`claude` 三项，每项最多600个UTF-16单位。分工**在首轮公开后启用**，首轮仍使用相同原始材料和中性问题，避免角色先限定判断。未传时继续使用通用协作约定。
 
 例如，改进一个本地MCP项目时：
@@ -51,13 +53,14 @@ Gemini 和 Claude 分别通过配置的 Antigravity 模型调用。GPT 由 MCP �
 
 提示词写清当前问题、优先关注点和可用的检查办法，不预设必须支持或反对谁。公开后每位远端模型只收到自己的项目分工，并附带共同约定：允许跨角色补充，没有新增内容可以pass，分工不赋予最终裁决权。客户端应读取GPT分工并应用于后续GPT发言；服务不会另外调用GPT。页面“项目分工”可查看原文。
 
-任务内的分工创建后保持不变；换项目或明显调整分工时新建任务，旧讨论保留原记录。把不同关注点分给谁，应随项目需要调整，不把模型品牌等同于固定能力。是否更有效仍应通过同任务、同预算对照验证。
+使用上述旧式`roles`创建的任务，分工创建后保持不变；需要动态调整时使用新的`project`流程。把不同关注点分给谁，应随项目需要调整，不把模型品牌等同于固定能力。是否更有效仍应通过同任务、同预算对照验证。
 
 ## MCP 工具
 
 | 工具 | 用途 | 模型请求 |
 | --- | --- | --- |
-| `agy_council_create(goal, facts="", max_turns_per_model=2, roles=null)` | 新建任务，可选项目分工，独立预算各1–8次 | 无 |
+| `agy_council_create(goal, facts="", max_turns_per_model=2, roles=null, project=null)` | 新建任务；新项目传project，旧方式可传roles，两者互斥 | 无 |
+| `agy_council_assign_roles(...)` | 理解后选角并生成提示词，或追加本阶段分工版本 | 无 |
 | `agy_council_note(...)` | 提交客户端发言或共同方案版本 | 无 |
 | `agy_council_round(discussion_id, participants=null, focus="", reply_to=null)` | 默认 Gemini/Claude 各一次并发；也可只选一位 | 最多两次 |
 | `agy_council_reveal(discussion_id)` | 收齐后公开首轮，进入讨论 | 无 |

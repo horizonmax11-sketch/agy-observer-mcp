@@ -2,10 +2,12 @@
 
 import asyncio
 import json
+import errno
 import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +18,40 @@ from agy_observer.service import Service
 
 
 class HistoryRegressionTests(unittest.TestCase):
+    def test_busy_status_failure_keeps_old_snapshot_and_cleans_temp(self):
+        with tempfile.TemporaryDirectory() as folder:
+            record = RunRecord(Path(folder), "synthetic", "none")
+            before = (record.path / "status.json").read_bytes()
+            with patch("agy_observer.runtime.os.replace", side_effect=PermissionError(errno.EACCES, "busy")), patch("agy_observer.storage.time.sleep"):
+                with self.assertRaises(PermissionError):
+                    record.emit("new_event")
+            self.assertEqual((record.path / "status.json").read_bytes(), before)
+            self.assertFalse((record.path / "status.tmp").exists())
+
+    def test_status_reader_does_not_starve_atomic_writer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            record = RunRecord(Path(folder) / "runs", "synthetic", "none")
+            history = History(folder)
+            stop = threading.Event()
+            errors = []
+            def read_continuously():
+                while not stop.is_set():
+                    try:
+                        self.assertEqual(history.status(record.run_id)["run_id"], record.run_id)
+                    except BaseException as error:
+                        errors.append(error)
+                        return
+            reader = threading.Thread(target=read_continuously)
+            reader.start()
+            try:
+                for i in range(40):
+                    record.emit("snapshot_probe", count=i)
+            finally:
+                stop.set()
+                reader.join(3)
+            self.assertFalse(reader.is_alive())
+            self.assertEqual(errors, [])
+
     def test_summary_cache_and_full_detail(self):
         with tempfile.TemporaryDirectory() as folder:
             history = History(folder)
@@ -67,6 +103,25 @@ class HistoryRegressionTests(unittest.TestCase):
 
 
 class LifecycleRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_terminal_stream_survives_one_busy_status_replacement(self):
+        with tempfile.TemporaryDirectory() as folder:
+            record = RunRecord(Path(folder), "synthetic", "none")
+            replace = os.replace
+            injected = False
+            def occasionally_busy(source, target):
+                nonlocal injected
+                if not injected and json.loads(Path(source).read_text(encoding="utf-8")).get("last_event") == "cli_result":
+                    injected = True
+                    raise PermissionError(errno.EACCES, "reader holds status")
+                return replace(source, target)
+            events = [dict(event="init"), dict(event="result", result=dict(status="SUCCESS", response="complete reply"))]
+            code = ";".join("print(" + repr(json.dumps(e)) + ",flush=True)" for e in events)
+            with patch("agy_observer.runtime.os.replace", side_effect=occasionally_busy):
+                _, _, exit_code, payload = await capture([sys.executable, "-c", code], cwd=None, env=dict(os.environ), record=record, stream=True, timeout=5)
+            self.assertTrue(injected)
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["response"], "complete reply")
+
     async def test_closed_service_rejects_calls(self):
         with tempfile.TemporaryDirectory() as folder:
             service = Service(Settings(state_dir=Path(folder), enabled=True))

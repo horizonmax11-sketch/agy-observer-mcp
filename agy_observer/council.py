@@ -13,6 +13,7 @@ import uuid
 
 from .discussions import DIALOGUE_STYLE, checked, clipped, peer_envelope, units
 from .runtime import utc
+from . import project as projects
 
 PEERS = {"gpt", "gemini", "claude"}
 REMOTE = {"gemini", "claude"}
@@ -55,10 +56,14 @@ def council_envelope(content):
         return peer_envelope(content)
     except ValueError:
         text = content.strip().replace("\r\n", "\n")
-        if not text.startswith("```json\n") or "\n```\n" not in text:
-            raise
-        first, last = text.split("\n```\n", 1)
-        first = peer_envelope(first + "\n```")
+        if text.startswith("```json\n") and "\n```\n" in text:
+            first, last = text.split("\n```\n", 1)
+            first = peer_envelope(first + "\n```")
+        else:
+            # Locate a complete first object; strict parsing below still rejects
+            # duplicate keys/non-finite values and any trailing third document.
+            _, end = json.JSONDecoder().raw_decode(text)
+            first, last = peer_envelope(text[:end]), text[end:]
         last = peer_envelope(last)
         if not isinstance(first, dict) or first != last:
             raise ValueError("Conflicting structured replies")
@@ -95,13 +100,15 @@ def validate(data):
             or m.get("author") not in PEERS
             or not isinstance(m.get("content"), str)
             or m.get("state") not in TERMINAL | {"running"}
-            or m.get("kind") not in KINDS | {"initial", "plan", "summary", "contribution"}
+            or m.get("kind") not in KINDS | {"initial", "plan", "summary", "contribution", "roles"}
         ):
             raise ValueError("Invalid council message")
         refs(data, m.get("references", []), before=i)
         answers(data, m["author"], m.get("answers_to", []), before=i)
         if m.get("question") is not None:
             checked(m["question"], 800, "question")
+    if "project" in data:
+        projects.validate(data)
     return data
 
 
@@ -150,6 +157,9 @@ def public(data):
     result["budget_exhausted"] = all(
         n >= result["max_turns_per_model"] for n in result["attempts"].values()
     )
+    if "project" in result:
+        result["workflow_stage"] = projects.stage(result)
+        result["role_version"] = projects.version(result)
     if result["phase"] == "collect":
         result["open_questions"] = []
         for m in result["messages"]:
@@ -183,13 +193,16 @@ class Council:
             raise ValueError("Not a three-participant council")
         return data
 
-    def create(self, goal, facts, models, max_turns_per_model=2, *, kind="三方协作", roles=None):
+    def create(self, goal, facts, models, max_turns_per_model=2, *, kind="三方协作", roles=None, project=None):
         goal = checked(goal, 2000, "goal")
         facts = checked(facts, 3000, "facts") if facts else "未提供额外材料。"
         if type(max_turns_per_model) is not int or not 1 <= max_turns_per_model <= 8:
             raise ValueError("Per-model budget must be between 1 and 8")
         if set(models) != REMOTE or len(set(models.values())) != 2:
             raise ValueError("Configure two distinct Gemini and Claude model identifiers")
+        if project is not None and roles is not None:
+            raise ValueError("Project understanding must precede roles; omit preassigned roles")
+        profile = projects.brief(project) if project is not None else None
         data = dict(
             protocol="council-v1",
             discussion_id=f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:12]}",
@@ -212,6 +225,9 @@ class Council:
             created_utc=utc(),
             updated_utc=utc(),
         )
+        if profile is not None:
+            data["project"] = dict(brief=profile, role_versions=[])
+            data["roles"] = {p: "尚未分工；先共同理解项目，再选择当前需要的三个角色。" for p in sorted(PEERS)}
         with self.store.writing():
             self.store.save(data)
         return public(data)
@@ -262,6 +278,8 @@ class Council:
             if kind == "support" and (not references or not evidence):
                 raise ValueError("Support requires references and stated grounds, not a vote")
             if kind == "plan":
+                if "project" in data and not projects.version(data):
+                    raise ValueError("First assign project roles before drafting the work plan")
                 if (
                     type(expected_plan_version) is not int
                     or expected_plan_version != data["plan_version"]
@@ -286,6 +304,8 @@ class Council:
             )
             if kind == "initial":
                 m["initial_context"] = initial_context
+            if "project" in data:
+                m["role_version"] = projects.version(data)
             if kind == "plan":
                 m["plan_version"] = data["plan_version"]
             data["messages"].append(m)
@@ -317,6 +337,10 @@ class Council:
     def context(self, data, participant, focus, reply_to):
         collecting = data["phase"] == "collect"
         material = dict(goal=data["goal"], facts=data["facts"])
+        project = "project" in data
+        role_active = not project or bool(projects.version(data))
+        if project:
+            material["project"] = projects.current_brief(data)
         if collecting:
             # No history, briefs from the client, shared draft or peer identifiers.
             manifest = dict(
@@ -325,8 +349,15 @@ class Council:
                 omitted_ids=[m["id"] for m in data["messages"]],
             )
             instruction = "先只看原始需求，说说最关键的一点、一个容易漏掉的角度，以及你想弄清楚的问题。简短交流，先不展开完整方案。"
+            if project:
+                instruction = (
+                    "先理解项目的目标、当前阶段、成功标准、约束和材料缺口。指出最重要的一处遗漏或歧义并追问，"
+                    "可简短建议三种互补角色及理由，但先不分配给模型、不写完整方案。"
+                    "项目材料由客户端提供，未读到的代码或文档不要说已经检查。"
+                )
         else:
-            material["role"] = data["roles"][participant]
+            if role_active:
+                material["role"] = data["roles"][participant]
             chosen = {m["id"] for m in data["messages"][-6:]}
             chosen.update(
                 m["id"]
@@ -379,6 +410,16 @@ class Council:
                 "也留意大家是否一起漏看了某个前提，用具体理由和证据作判断。"
                 "references记录你回应的发言；改变想法时，说明是哪一点让你调整了判断。"
             )
+            if project and not role_active:
+                instruction = (
+                    "先接住大家对项目的理解，澄清成功标准、材料缺口和当前重点。"
+                    "如有分歧请指出具体差别及可核对办法；可以建议角色，尚未开始按角色执行。"
+                    "不把客户端整理的理解当成全员认可。references记录你回应的发言。"
+                )
+        if project:
+            manifest.update(role_version=projects.version(data), workflow_stage=projects.stage(data))
+            if not collecting:
+                material["context"] = manifest
         prompt = (
             "你是一起解决问题的协作参与者，大家有平等的发言权。"
             + instruction
@@ -438,6 +479,8 @@ class Council:
                     context=manifest,
                     initial_context="fresh" if data["phase"] == "collect" else None,
                 )
+                if "project" in data:
+                    m["role_version"] = projects.version(data)
                 data["messages"].append(m)
                 data["attempts"][p] += 1
                 result.append((p, m["id"], prompt, data["models"][p]))

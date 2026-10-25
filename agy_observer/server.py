@@ -118,14 +118,35 @@ def create_server(settings=None):
         facts: str = "",
         max_turns_per_model: int = 2,
         roles: dict[str, str] | None = None,
+        project: dict[str, str] | None = None,
     ) -> dict:
-        """Create a task with sealed initial judgments and separate 1..8 AGY budgets. Optional roles must map gpt/gemini/claude to project briefs (max 600 UTF-16 units each); applied AFTER reveal only. Client GPT should also follow its brief then, with freedom to question across roles. No model call."""
+        """Create a task with independent initial judgments and 1..8 AGY budgets each. Prefer project for new projects: client first READS relevant files/docs, supplies stage/materials (source + observed contents)/success_criteria/constraints/unknowns, total <=3000 UTF-16 units. Collect three project understandings, reveal, then select roles with agy_council_assign_roles. Do not also preassign roles. Without project, legacy roles map remains supported. No model call or arbitrary project file reading."""
         return service.council.create(
             goal,
             facts,
             {"gemini": service.settings.model, "claude": service.settings.claude_model},
             max_turns_per_model,
             roles=roles,
+            project=project,
+        )
+
+    @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+    )
+    def agy_council_assign_roles(
+        discussion_id: str,
+        assignments: dict[str, dict[str, str]],
+        stage: str,
+        rationale: str,
+        references: list[int],
+        expected_role_version: int,
+        project_updates: dict[str, str] | None = None,
+    ) -> dict:
+        """After project understanding/reveal, choose the THREE roles this stage needs, then assign to gpt/gemini/claude. Each spec needs role (<=80), focus/output (<=200 each), reason (<=300 UTF-16 units). Initial sources must include all three initial understandings. Explain choice/tradeoffs in rationale, preserve unresolved differences. No peer endorsement is inferred. Revision needs current expected_role_version, sources and rationale; may update project brief fields. Appends history and generates role prompts, never rewrites old contributions or budgets. Client applies GPT prompt; no new GPT call, model call or automatic turn."""
+        from .project import ProjectWorkflow
+
+        return ProjectWorkflow(service.council).assign(
+            discussion_id, assignments, stage, rationale, references, expected_role_version, project_updates
         )
 
     @app.tool(

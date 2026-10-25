@@ -50,7 +50,7 @@ class DiscussionTests(unittest.TestCase):
 
     def test_persistent_replace_failure_preserves_old_document_and_releases_lock(self):
         before = self.store.file(self.identifier).read_bytes()
-        with patch("agy_observer.discussions.os.replace", side_effect=PermissionError(errno.EACCES, "busy")), patch("agy_observer.discussions.time.sleep"):
+        with patch("agy_observer.discussions.os.replace", side_effect=PermissionError(errno.EACCES, "busy")), patch("agy_observer.storage.time.sleep"):
             with self.assertRaises(PermissionError):
                 self.proposal()
         self.assertEqual(self.store.file(self.identifier).read_bytes(), before)

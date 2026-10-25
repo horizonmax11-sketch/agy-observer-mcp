@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 import re
 import threading
-import time
 import uuid
 
 from .runtime import strict_json, utc
+from .storage import retry_permission, wait_for_write
 
 MAX_BYTES = 2 * 1024 * 1024
 MAX_MESSAGES = 40
@@ -58,17 +58,6 @@ def peer_envelope(content):
             value = value[7:-3].strip()
         value = strict_json(value)
     return value
-
-
-def retry_permission(operation):
-    """Bounded local I/O retry; other errors and persistent denial still surface."""
-    for attempt in range(5):
-        try:
-            return operation()
-        except PermissionError:
-            if attempt == 4:
-                raise
-            time.sleep(0.025 * (2 ** attempt))
 
 
 class Discussions:
@@ -131,10 +120,7 @@ class Discussions:
         # No reader lock or data write is needed. A stale claim does not prevent
         # reading the last complete document after this bounded wait.
         if self._writing_thread != threading.get_ident():
-            for attempt in range(4):
-                if not (self.root / "write.lock").exists():
-                    break
-                time.sleep(0.025 * (2 ** attempt))
+            wait_for_write(self.root / "write.lock")
         def bounded_read():
             with self.file(discussion_id).open("rb") as file:
                 return file.read(MAX_BYTES + 1)

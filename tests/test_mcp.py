@@ -59,6 +59,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                                 "agy_council_note",
                                 "agy_council_round",
                                 "agy_council_reveal",
+                                "agy_council_assign_roles",
                             ]
                         ),
                     )
@@ -98,6 +99,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         "agy_discussion_read", {"discussion_id": identifier}
                     )
                     self.assertEqual(json.loads(loaded.content[0].text)["model_attempts"], 0)
+                    from tests.test_project import PROFILE, ROLES
+
+                    created = await session.call_tool("agy_council_create", {"goal": "project intake", "project": PROFILE})
+                    self.assertFalse(created.isError)
+                    project_task = json.loads(created.content[0].text)
+                    self.assertEqual(project_task["workflow_stage"], "understand")
+                    denied = await session.call_tool("agy_council_assign_roles", {
+                        "discussion_id": project_task["discussion_id"], "assignments": ROLES,
+                        "stage": "work", "rationale": "too early", "references": [], "expected_role_version": 0,
+                    })
+                    self.assertTrue(denied.isError)
                     created = await session.call_tool(
                         "agy_council_create", {"goal": "synthetic council", "roles": {"gpt": "implementation", "gemini": "usability", "claude": "alternatives"}}
                     )

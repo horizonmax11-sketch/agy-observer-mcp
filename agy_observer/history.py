@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import threading
 from .runtime import strict_json
+from .storage import retry_permission, wait_for_write
 
 MAX_STATUS_BYTES = 5 * 1024 * 1024
 MAX_EVENTS_BYTES = 256 * 1024
@@ -45,8 +46,12 @@ class History:
         return target
 
     def status(self, run_id):
-        with self.file(run_id, "status.json").open("rb") as file:
-            data = file.read(MAX_STATUS_BYTES + 1)
+        path = self.file(run_id, "status.json")
+        wait_for_write(path.with_name("status.tmp"))
+        def bounded_read():
+            with path.open("rb") as file:
+                return file.read(MAX_STATUS_BYTES + 1)
+        data = retry_permission(bounded_read)
         if len(data) > MAX_STATUS_BYTES:
             raise ValueError("History status exceeds the read limit")
         try:

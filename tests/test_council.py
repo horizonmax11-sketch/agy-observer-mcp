@@ -167,6 +167,7 @@ class CouncilTests(unittest.TestCase):
         body = envelope("readable", question="why?")
         normalized = json.dumps(json.loads(body), sort_keys=True)
         self.assertEqual(council_envelope("```json\n" + body + "\n```\n" + normalized), json.loads(body))
+        self.assertEqual(council_envelope(body + "\n" + normalized), json.loads(body))
         for suffix in (envelope("different"), normalized + "\nextra", "not json"):
             with self.assertRaises(ValueError):
                 council_envelope("```json\n" + body + "\n```\n" + suffix)

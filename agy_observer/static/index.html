@@ -45,7 +45,7 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
   <div id="runs"></div><div id="sessions" hidden></div>
  </nav>
  <article>
- <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><details><summary id="role-heading">参与方式</summary><dl id="roles"></dl><p class="muted">关注重点可以跨越，不限制补充和质疑。模型名称取自请求记录，GPT 发言由客户端提交。每条发言的“依据与记录”保留完整型号、来源和上下文。</p></details><p class="muted" id="discussion-help">每轮由客户端发起。</p><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
+ <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><div id="project-context"></div><details><summary id="role-heading">参与方式</summary><dl id="roles"></dl><p class="muted">关注重点可以跨越，不限制补充和质疑。模型名称取自请求记录，GPT 发言由客户端提交。每条发言的“依据与记录”保留完整型号、来源和上下文。</p></details><p class="muted" id="discussion-help">每轮由客户端发起。</p><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
  <section id="single">
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
   <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
@@ -130,13 +130,26 @@ async function updateHistory(){
 }
 el('show-tests').onchange=()=>{pinned=false;el('runs').scrollTop=0;if(el('view').value==='runs')updateHistory().catch(fail)};
 el('details').ontoggle=()=>{if(el('details').open)renderDetail().catch(fail)};
-const messageKinds={proposal:'方案',feedback:'补充',decision:'选择',summary:'讨论小结',review:'建议',contribution:'发言',question:'提问',answer:'回应',challenge:'不同看法',revision:'调整想法',initial:'第一轮想法',plan:'方案草案',observation:'补充想法',evidence:'补充信息',support:'支持',pass:'暂时没有补充'};
+const messageKinds={proposal:'方案',feedback:'补充',decision:'选择',summary:'讨论小结',review:'建议',contribution:'发言',question:'提问',answer:'回应',challenge:'不同看法',revision:'调整想法',initial:'第一轮想法',plan:'方案草案',roles:'分工安排',observation:'补充想法',evidence:'补充信息',support:'支持',pass:'暂时没有补充'};
 const resolutions={accepted:'采纳',rejected:'拒绝',deferred:'暂缓'};
+function fillProject(data,who){
+ const root=el('project-context');root.replaceChildren();if(!data.project)return;
+ const versions=data.project.role_versions,latest=versions.at(-1),profile=latest?.brief||data.project.brief;
+ const phase=document.createElement('p');phase.textContent=({understand:'① 了解项目：先看相同材料，各自找遗漏和需要澄清的地方。',assign:'② 确认重点与选角：三份理解已公开，先澄清分歧，再选择本阶段需要的三个角色。',work:'③ 按分工推进：'+profile.stage+' · 当前分工 v'+versions.length})[data.workflow_stage]||'';root.append(phase);
+ const details=document.createElement('details'),summary=document.createElement('summary'),list=document.createElement('dl');summary.textContent='项目理解与材料';details.append(summary,list);
+ for(const [key,label] of [['stage','当前阶段'],['materials','材料与已知内容'],['success_criteria','成功标准'],['constraints','约束'],['unknowns','待澄清的问题']]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=profile[key];list.append(dt,dd)}root.append(details);
+ if(versions.length){const history=document.createElement('details'),title=document.createElement('summary');title.textContent='分工调整记录（'+versions.length+'版）';history.append(title);
+  for(const v of versions){const heading=document.createElement('h3'),reason=document.createElement('p');heading.textContent='v'+v.version+' · '+v.stage;reason.textContent=v.rationale;history.append(heading,reason);
+   for(const p of ['gpt','gemini','claude']){const spec=v.assignments[p],text=document.createElement('p');text.textContent=who(p)+' · '+spec.role+'：'+spec.focus+'；产出：'+spec.output+'；选择原因：'+spec.reason;history.append(text)}
+  }root.append(history);
+ }
+}
 function fillDiscussion(data){
  const council=data.protocol==='council-v1',peer=data.protocol==='peer-v1';
  const recordedModels=[...new Set(data.messages.filter(m=>m.author==='reviewer'&&m.model_requested).map(m=>modelName(m.model_requested)))];
  const who=(author,model)=>council?({gpt:'GPT',gemini:'Gemini',claude:'Claude'}[author]||author):author==='lead'?'GPT':model?modelName(model):recordedModels.join(' / ')||'未记录模型';
- txt('role-heading',council?'项目分工'+(data.phase==='collect'?'（首轮公开后启用）':''):'参与方式');
+ fillProject(data,who);
+ txt('role-heading',data.project?(data.role_version?'本阶段分工 · v'+data.role_version:'项目分工（待共同选择）'):council?'项目分工'+(data.phase==='collect'?'（首轮公开后启用）':''):'参与方式');
  txt('discussion-help',isTest(data)?'离线演示：这里都是示例内容，没有调用模型。':council?'先各自想一想，再一起把方案改好。有不同看法可以直接提出，也可以补充信息或调整想法。':`${who('lead')} 与 ${who('reviewer')} 一起讨论。${peer?'可以接着聊、问问题，也可以换个角度看看。':''}`);
  txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · Gemini '+data.attempts.gemini+'/'+data.max_turns_per_model+' · Claude '+data.attempts.claude+'/'+data.max_turns_per_model:''}`);
  el('roles').replaceChildren();
@@ -158,7 +171,8 @@ function fillDiscussion(data){
  el('messages').replaceChildren();
  for(const row of data.messages){
   const card=document.createElement('section');card.className='message '+row.author+(row.kind==='plan'?' plan':'');card.id='message-'+row.id;
-  const title=document.createElement('strong');title.textContent=`#${row.id} ${who(row.author,row.model_requested)} · ${messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
+  const role=data.project&&row.role_version?data.project.role_versions[row.role_version-1]?.assignments[row.author]?.role:null;
+  const title=document.createElement('strong');title.textContent=`#${row.id} ${who(row.author,row.model_requested)}${role?' · '+role+'（v'+row.role_version+'）':''} · ${data.project&&row.kind==='initial'?'项目理解':messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
   const record=document.createElement('details'),recordTitle=document.createElement('summary');recordTitle.textContent='依据与记录';record.append(recordTitle);
   const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'选择：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');if(reference.textContent)record.append(reference);
   if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮话题：'+row.instruction;record.append(instruction)}
@@ -188,13 +202,13 @@ async function updateDiscussions(rows){
  if(!visible.some(row=>row.discussion_id===selectedDiscussion)){
   if(selectedDiscussion){
    discussionKey=null;discussionData=null;txt('goal','找不到此讨论，或已被离线测试筛选隐藏。');txt('discussion-state','未找到');txt('discussion-help','请从左侧选择讨论，或检查“显示离线测试”。');
-   for(const id of ['roles','shared-plan','questions','messages'])el(id).replaceChildren();
+   for(const id of ['project-context','roles','shared-plan','questions','messages'])el(id).replaceChildren();
    for(const button of sessionButtons.values())button.setAttribute('aria-current','false');return;
   }
   selectedDiscussion=visible[0]?.discussion_id;discussionKey=null;updateAddress();
  }
  for(const [id,button] of sessionButtons)button.setAttribute('aria-current',id===selectedDiscussion);
- if(!selectedDiscussion){discussionKey=null;discussionData=null;txt('goal','暂无协作任务');txt('discussion-state','暂无记录');txt('discussion-help','创建共同目标后，任一伙伴都可以先开题。');el('roles').replaceChildren();el('shared-plan').replaceChildren();el('questions').replaceChildren();el('messages').replaceChildren();return}
+ if(!selectedDiscussion){discussionKey=null;discussionData=null;txt('goal','暂无协作任务');txt('discussion-state','暂无记录');txt('discussion-help','创建共同目标后，任一伙伴都可以先开题。');for(const id of ['project-context','roles','shared-plan','questions','messages'])el(id).replaceChildren();return}
  const row=visible.find(row=>row.discussion_id===selectedDiscussion),id=selectedDiscussion,key=id+':'+row.updated_utc;
  if(key!==discussionKey){
   const data=await read('/api/discussions/'+encodeURIComponent(id));if(id!==selectedDiscussion||el('view').value!=='discussions')return;

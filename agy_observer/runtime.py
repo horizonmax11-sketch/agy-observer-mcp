@@ -73,7 +73,12 @@ class RunRecord:
             return  # Preserve every event; coalesce full-response snapshots to at most 10Hz.
         temp = self.path / "status.tmp"
         temp.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temp, self.path / "status.json")
+        from .storage import retry_permission
+
+        try:
+            retry_permission(lambda: os.replace(temp, self.path / "status.json"))
+        finally:
+            temp.unlink(missing_ok=True)
         self._snapshot_at = now
 
     def finish(self, state, **data):
