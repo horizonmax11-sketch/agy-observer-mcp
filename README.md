@@ -4,7 +4,7 @@
 
 每次调用保存一份记录，可在本地窗口查看。仅依赖 MCP Python SDK 与标准库，无需完整 PAL 环境或前端构建工具。当前版本 **0.7.1rc1（发布候选版）**。
 
-![界面预览：图中内容为离线模拟](docs/demo.png)
+![界面预览：图中内容为离线模拟](docs/demo.jpg)
 
 [快速开始](#快速开始) · [连接 MCP](#连接-mcp) · [使用方式](#使用方式) · [配置参考](docs/configuration.md) · [设计说明](docs/architecture.md) · [验证范围](docs/validation.md)
 
@@ -98,7 +98,7 @@ GPT 由 MCP 客户端参与，本服务不另行调用 GPT API。客户端已经
 
 离线预览（不调用模型）：
 
-![三方协作界面，全部内容为离线模拟](docs/collaboration.png)
+![三方协作界面，全部内容为离线模拟](docs/collaboration.jpg)
 
 ```sh
 python -m agy_observer.demo --council --state-dir ./state --port 8766 --open

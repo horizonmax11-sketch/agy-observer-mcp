@@ -1,8 +1,10 @@
 """Real local STDIO handshake. Model execution remains off, including a negative run call."""
 
 import asyncio
+import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -41,6 +43,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = await session.list_tools()
+                    example = (
+                        Path(__file__).resolve().parents[1] / "examples/codex-config.toml"
+                    ).read_text(encoding="utf-8")
+                    enabled = json.loads(
+                        re.search(r"^enabled_tools\s*=\s*(\[.*\])$", example, re.M)[1]
+                    )
+                    self.assertEqual(
+                        set(enabled),
+                        {tool.name for tool in tools.tools},
+                        "The client example must expose every documented tool",
+                    )
                     self.assertEqual(
                         sorted(t.name for t in tools.tools),
                         sorted(
@@ -76,8 +89,6 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     created = await session.call_tool(
                         "agy_discussion_create", {"goal": "synthetic collaboration"}
                     )
-                    import json
-
                     task = json.loads(created.content[0].text)
                     identifier = task["discussion_id"]
                     self.assertFalse((await session.call_tool("agy_discussion_read", {})).isError)
@@ -101,20 +112,39 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(json.loads(loaded.content[0].text)["model_attempts"], 0)
                     from tests.test_project import PROFILE, ROLES
 
-                    created = await session.call_tool("agy_council_create", {"goal": "project intake", "project": PROFILE})
+                    created = await session.call_tool(
+                        "agy_council_create", {"goal": "project intake", "project": PROFILE}
+                    )
                     self.assertFalse(created.isError)
                     project_task = json.loads(created.content[0].text)
                     self.assertEqual(project_task["workflow_stage"], "understand")
-                    denied = await session.call_tool("agy_council_assign_roles", {
-                        "discussion_id": project_task["discussion_id"], "assignments": ROLES,
-                        "stage": "work", "rationale": "too early", "references": [], "expected_role_version": 0,
-                    })
+                    denied = await session.call_tool(
+                        "agy_council_assign_roles",
+                        {
+                            "discussion_id": project_task["discussion_id"],
+                            "assignments": ROLES,
+                            "stage": "work",
+                            "rationale": "too early",
+                            "references": [],
+                            "expected_role_version": 0,
+                        },
+                    )
                     self.assertTrue(denied.isError)
                     created = await session.call_tool(
-                        "agy_council_create", {"goal": "synthetic council", "roles": {"gpt": "implementation", "gemini": "usability", "claude": "alternatives"}}
+                        "agy_council_create",
+                        {
+                            "goal": "synthetic council",
+                            "roles": {
+                                "gpt": "implementation",
+                                "gemini": "usability",
+                                "claude": "alternatives",
+                            },
+                        },
                     )
                     identifier = json.loads(created.content[0].text)["discussion_id"]
-                    self.assertEqual(json.loads(created.content[0].text)["roles"]["claude"], "alternatives")
+                    self.assertEqual(
+                        json.loads(created.content[0].text)["roles"]["claude"], "alternatives"
+                    )
                     noted = await session.call_tool(
                         "agy_council_note",
                         {
