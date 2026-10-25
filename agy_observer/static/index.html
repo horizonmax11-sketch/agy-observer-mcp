@@ -176,7 +176,7 @@ function fillDiscussion(data){
   const record=document.createElement('details'),recordTitle=document.createElement('summary');recordTitle.textContent='依据与记录';record.append(recordTitle);
   const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'选择：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');if(reference.textContent)record.append(reference);
   if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮话题：'+row.instruction;record.append(instruction)}
-  const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||'等待公开回复；此轮尚未验收。';card.append(content);
+  const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||(row.state==='running'?'等待公开回复…':row.state==='success'?'没有公开正文。':'本次调用未完成，详情见“依据与记录”。');card.append(content);
   if(row.format==='plain-text'||row.protocol_warning?.includes('message包含')){const warning=document.createElement('p');warning.className='muted';warning.textContent='这条回复仍带有格式包装，已保留原文。';card.append(warning)}
   for(const [label,value] of [['接着这些发言',(row.references||[]).map(i=>'#'+i).join('、')],['补充依据',row.evidence],['调整原因',row.change_reason],['首轮上下文',row.initial_context?({fresh:'新上下文（客户端提交项按其声明记录）',history_visible:'已看过历史',unknown:'未确认'}[row.initial_context]||row.initial_context):'']]){if(value){const p=document.createElement('p');p.textContent=label+'：'+value;record.append(p)}}
   if(row.question&&row.kind!=='question'){const q=document.createElement('p');q.textContent='想问一下：'+row.question;card.append(q)}
