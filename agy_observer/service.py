@@ -56,9 +56,20 @@ class Service:
         self.monitor = Monitor(settings.state_dir, settings.port)
         self.active = {}
         self.active_models = {}
+        self.batch_task = None
+        self._batch_token = None
         self.closing = False
 
-    async def run(self, prompt, *, discussion=None, council=None, model=None, parallel=False):
+    async def run(
+        self,
+        prompt,
+        *,
+        discussion=None,
+        council=None,
+        model=None,
+        parallel=False,
+        _batch_token=None,
+    ):
         model = model or self.settings.model
         if self.closing:
             raise ValueError("Server is shutting down; new calls are not accepted")
@@ -66,6 +77,8 @@ class Service:
             raise ValueError(
                 "Model execution is disabled. The operator must explicitly set AGY_OBSERVER_ENABLED=1."
             )
+        if self.batch_task is not None and _batch_token is not self._batch_token:
+            raise ValueError("Wait for the active batch before starting another call")
         if (
             not isinstance(prompt, str)
             or not prompt.strip()
@@ -116,7 +129,9 @@ class Service:
                 prompt,
             ]
             if council:
-                command.extend(["--json-schema", json.dumps(RESPONSE_SCHEMA, separators=(",", ":"))])
+                command.extend(
+                    ["--json-schema", json.dumps(RESPONSE_SCHEMA, separators=(",", ":"))]
+                )
             _, stderr, code, payload = await capture(
                 command,
                 cwd=str(self.settings.workspace),
@@ -168,11 +183,23 @@ class Service:
     async def council_round(self, identifier, participants=None, focus="", reply_to=None):
         if self.closing or not self.settings.enabled:
             raise ValueError("Model execution is disabled or server is shutting down")
-        if self.active:
+        if self.active or self.batch_task is not None:
             raise ValueError("Wait for the active batch before starting another council round")
+        # No await before claiming admission: even browser startup belongs to this batch.
+        self.batch_task = asyncio.current_task()
+        self._batch_token = object()
+        try:
+            return await self._council_round(identifier, participants, focus, reply_to)
+        finally:
+            self.batch_task = None
+            self._batch_token = None
+
+    async def _council_round(self, identifier, participants, focus, reply_to):
         data = self.council.read(identifier)
         if data["models"] != {"gemini": self.settings.model, "claude": self.settings.claude_model}:
-            raise ValueError("Council model configuration changed; create a task with the current configuration")
+            raise ValueError(
+                "Council model configuration changed; create a task with the current configuration"
+            )
         if self.settings.workspace is None or not self.settings.workspace.is_dir():
             raise ValueError("Configure AGY_OBSERVER_WORKSPACE as an existing directory")
         executable = shutil.which(self.settings.executable)
@@ -189,9 +216,14 @@ class Service:
         )
 
         async def contribute(participant, message_id, prompt, model):
+            result = None
             try:
                 result = await self.run(
-                    prompt, council=(identifier, message_id), model=model, parallel=True
+                    prompt,
+                    council=(identifier, message_id),
+                    model=model,
+                    parallel=True,
+                    _batch_token=self._batch_token,
                 )
                 self.council.finish(identifier, message_id, "success", result["response"])
                 return dict(
@@ -215,6 +247,7 @@ class Service:
                     message_id=message_id,
                     state=state,
                     error=type(error).__name__,
+                    **({"run_id": result["run_id"], "recovery_available": True} if result else {}),
                 )
 
         outcomes = await asyncio.gather(*(contribute(*item) for item in reservations))
@@ -227,7 +260,7 @@ class Service:
     async def discussion_turn(self, discussion_id, instruction="", reply_to=None):
         if self.closing or not self.settings.enabled:
             raise ValueError("Model execution is disabled or server is shutting down")
-        if self.active:
+        if self.active or self.batch_task is not None:
             raise ValueError("Another model call is active")
         message_id, prompt = self.discussions.reserve(discussion_id, instruction, reply_to)
         try:
@@ -259,11 +292,34 @@ class Service:
         data = self.discussions.read(discussion_id)
         council = data.get("protocol") == "council-v1"
         for message in data["messages"]:
+            run_id = message.get("run_id")
+            if run_id and message.get("state") in {"failed", "timeout", "cancelled", "interrupted"}:
+                if run_id in self.active:
+                    raise ValueError("Cannot recover a call active in this server")
+                status = self.history.status(run_id)
+                if status["state"] == "success":
+                    if (
+                        status.get("discussion_id") != discussion_id
+                        or status.get("discussion_message_id") != message["id"]
+                        or status.get("model_requested") != message.get("model_requested")
+                    ):
+                        raise ValueError(
+                            "Successful run does not match the failed discussion message"
+                        )
+                    data = (self.council if council else self.discussions).finish(
+                        discussion_id,
+                        message["id"],
+                        "success",
+                        status["response"],
+                        recovered_run_id=run_id,
+                    )
+                continue
             if message.get("state") != "running":
                 if (
                     data.get("protocol") in {"peer-v1", "council-v1"}
                     and message.get("state") == "success"
-                    and message.get("format") in {"plain-text", "council-json-partial", "council-json"}
+                    and message.get("format")
+                    in {"plain-text", "council-json-partial", "council-json"}
                     and message.get("run_id")
                 ):
                     status = self.history.status(message["run_id"])
@@ -311,6 +367,9 @@ class Service:
     async def close(self):
         self.closing = True
         tasks = list(self.active.values())
+        if self.batch_task is not None:
+            tasks.append(self.batch_task)
+        tasks = list({task for task in tasks if task is not asyncio.current_task()})
         for task in tasks:
             task.cancel()
         if tasks:

@@ -33,8 +33,13 @@ class Settings:
             raise ValueError("Gemini and Claude must have distinct configured model identifiers")
         if not 0 <= self.port <= 65535:
             raise ValueError("Invalid monitor port")
-        if not 1 <= self.cli_timeout <= 30 or not self.cli_timeout <= self.outer_timeout <= 40:
-            raise ValueError("Timeouts must remain within the 30s CLI / 40s outer ceiling")
+        if (
+            type(self.cli_timeout) is not int
+            or type(self.outer_timeout) is not int
+            or not 1 <= self.cli_timeout <= 180
+            or not self.cli_timeout <= self.outer_timeout <= 210
+        ):
+            raise ValueError("Timeouts must remain within the 180s CLI / 210s outer ceiling")
         if not 1024 <= self.output_limit <= 2 * 1024 * 1024:
             raise ValueError("Output limit must be between 1KiB and 2MiB per stream")
 
@@ -50,6 +55,7 @@ class Settings:
             xdg = os.environ.get("XDG_STATE_HOME")
             state_dir = (Path(xdg) if xdg else Path.home() / ".local/state") / "agy-observer"
         workspace = os.environ.get("AGY_OBSERVER_WORKSPACE")
+        cli_timeout = int(os.environ.get("AGY_OBSERVER_CLI_TIMEOUT", "30"))
         return cls(
             executable=os.environ.get("AGY_OBSERVER_CLI", "agy"),
             model=os.environ.get("AGY_OBSERVER_MODEL", "gemini-3.8-flash-low"),
@@ -59,6 +65,10 @@ class Settings:
             enabled=os.environ.get("AGY_OBSERVER_ENABLED") == "1",
             open_browser=os.environ.get("AGY_OBSERVER_OPEN_BROWSER", "1") != "0",
             port=int(os.environ.get("AGY_OBSERVER_PORT", "0")),
+            cli_timeout=cli_timeout,
+            outer_timeout=int(
+                os.environ.get("AGY_OBSERVER_OUTER_TIMEOUT", str(max(40, cli_timeout + 10)))
+            ),
         )
 
     def cli_environment(self):

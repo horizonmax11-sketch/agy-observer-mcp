@@ -10,6 +10,8 @@
 | `AGY_OBSERVER_STATE_DIR` | Linux/macOS按XDG state路径；Windows按LOCALAPPDATA |
 | `AGY_OBSERVER_PORT` | `0`，由操作系统选择空闲loopback端口 |
 | `AGY_OBSERVER_OPEN_BROWSER` | `1`；设为`0`是明确选择无界面运行 |
+| `AGY_OBSERVER_CLI_TIMEOUT` | 默认 `30` 秒；整数范围 `1..180` |
+| `AGY_OBSERVER_OUTER_TIMEOUT` | 默认 `max(40, CLI超时+10)` 秒；不小于 CLI 超时，最高 `210` |
 | `AGY_OBSERVER_CLI_HOME` | 可选，指向**已有**CLI登录HOME；不迁移或复制 |
 | `AGY_OBSERVER_CLI_XDG_CONFIG_HOME` 等 | 可选，CONFIG/CACHE/DATA/STATE各自指向已有CLI路径 |
 
@@ -24,7 +26,18 @@ CLI和本MCP最好运行在同一个操作系统环境。若CLI在WSL中，将Py
 WSL的窗口打开会尝试系统浏览器，再尝试Windows PowerShell的普通 `Start-Process`；不传ExecutionPolicy或权限绕过参数。浏览器访问WSL loopback依赖WSL的localhost转发。独立版已完成一次 WSL 下真实 CLI 的 MCP 调用；浏览器可从 Windows 访问 WSL 本地页面。此结果仅代表本次环境。如果无图形环境，可明确选择 `AGY_OBSERVER_OPEN_BROWSER=0` 并从 `agy_info` 获取URL。没有额外认证HOME隔离层。
 
 
-超时与双流限额是代码内的固定上限，未提供放宽上限的环境变量。
+较慢的模型可显式设置 `AGY_OBSERVER_CLI_TIMEOUT=120`、`AGY_OBSERVER_OUTER_TIMEOUT=150`。更长等待可能增加单次费用，不会增加任务次数预算或启用自动重试。超时记录保持原状；调整配置只影响后续显式调用。双流各 2 MiB 限额保持不变。
+
+## 升级与异常恢复
+
+升级前停止所有使用同一状态目录的 MCP 写入实例，备份私有状态目录，再安装新版本；不要让旧版和新版同时写入同一目录。状态目录应位于本机磁盘，未验证网络文件系统的锁语义。
+
+- **讨论正文缺失，但原始运行成功**：调用 `agy_discussion_recover(discussion_id)`。工具核对运行与任务、消息、模型的关联后，从原始成功回复恢复正文，保留原失败状态、错误和时间的恢复记录；不重跑模型，不退回或增加次数。真实失败的运行不会被改成成功。
+- **新版本写入进程崩溃**：操作系统会释放 `writer.guard` 上的内核锁。后续写入取得锁后，可回收本协议的残留 `write.lock`，并追加 `lock-recoveries.jsonl`。`writer.guard` 文件长期保留是正常现象，不要在服务运行时删除它。
+- **提示 legacy write.lock**：旧版或无法识别的锁不会自动删除。先停止所有相关写入实例，确认没有仍在执行的模型进程，备份后将状态目录 `discussions/write.lock` 改名保存，再启动新版。无法确认写入者已停止时不要清理。不要删除讨论 JSON 或原始运行记录。
+- **并发批次被拒绝**：等待当前批次完成后再显式发起。拒绝发生在次数预留前；已经预留的失败、取消或超时调用仍计入尝试预算。
+
+旧锁本身不能证明讨论文件已经损坏。旧版同样先写临时文件再原子替换，崩溃后可能留下的是上一份完整快照。重启后先用 `agy_discussion_read` 读取任务、`agy_status` 检查关联运行；能读取只证明存储格式可解析，不保证内容最新或语义正确。如果 JSON 损坏，保留原文件与临时文件，在备份副本上检查；优先从已知完整备份恢复。缺少可核对的运行关联时，不猜补编号或强行改成成功；可建立新任务，明确摘录的原始记录来源，保留旧失败记录等待人工核对。
 
 ## 常见问题
 

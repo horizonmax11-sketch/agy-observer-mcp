@@ -35,7 +35,15 @@ RESPONSE_SCHEMA = {
         "change_reason": {"type": "string"},
         "question": {"type": ["string", "null"]},
     },
-    "required": ["message", "kind", "references", "answers_to", "evidence", "change_reason", "question"],
+    "required": [
+        "message",
+        "kind",
+        "references",
+        "answers_to",
+        "evidence",
+        "change_reason",
+        "question",
+    ],
     "additionalProperties": False,
 }
 
@@ -193,7 +201,17 @@ class Council:
             raise ValueError("Not a three-participant council")
         return data
 
-    def create(self, goal, facts, models, max_turns_per_model=2, *, kind="三方协作", roles=None, project=None):
+    def create(
+        self,
+        goal,
+        facts,
+        models,
+        max_turns_per_model=2,
+        *,
+        kind="三方协作",
+        roles=None,
+        project=None,
+    ):
         goal = checked(goal, 2000, "goal")
         facts = checked(facts, 3000, "facts") if facts else "未提供额外材料。"
         if type(max_turns_per_model) is not int or not 1 <= max_turns_per_model <= 8:
@@ -212,10 +230,14 @@ class Council:
             kind=kind,
             phase="collect",
             closed=False,
-            roles=project_roles(roles) if roles is not None else {
-                p: "可开题、补证、质疑、修正和提出替代路径；关注角度按问题轮换，无固定裁决权。"
-                for p in sorted(PEERS)
-            },
+            roles=(
+                project_roles(roles)
+                if roles is not None
+                else {
+                    p: "可开题、补证、质疑、修正和提出替代路径；关注角度按问题轮换，无固定裁决权。"
+                    for p in sorted(PEERS)
+                }
+            ),
             max_turns_per_model=max_turns_per_model,
             attempts={p: 0 for p in sorted(REMOTE)},
             model_attempts=0,
@@ -227,7 +249,9 @@ class Council:
         )
         if profile is not None:
             data["project"] = dict(brief=profile, role_versions=[])
-            data["roles"] = {p: "尚未分工；先共同理解项目，再选择当前需要的三个角色。" for p in sorted(PEERS)}
+            data["roles"] = {
+                p: "尚未分工；先共同理解项目，再选择当前需要的三个角色。" for p in sorted(PEERS)
+            }
         with self.store.writing():
             self.store.save(data)
         return public(data)
@@ -417,7 +441,9 @@ class Council:
                     "不把客户端整理的理解当成全员认可。references记录你回应的发言。"
                 )
         if project:
-            manifest.update(role_version=projects.version(data), workflow_stage=projects.stage(data))
+            manifest.update(
+                role_version=projects.version(data), workflow_stage=projects.stage(data)
+            )
             if not collecting:
                 material["context"] = manifest
         prompt = (
@@ -503,14 +529,39 @@ class Council:
             data["updated_utc"] = utc()
             self.store.save(data)
 
-    def finish(self, identifier, message_id, state, content="", error=None, *, normalize_only=False):
+    def finish(
+        self,
+        identifier,
+        message_id,
+        state,
+        content="",
+        error=None,
+        *,
+        normalize_only=False,
+        recovered_run_id=None,
+    ):
         if state not in TERMINAL:
             raise ValueError("Invalid terminal state")
         with self.store.writing():
             data = self.read(identifier)
             m = data["messages"][message_id - 1]
             original = deepcopy(m)
-            if normalize_only:
+            if recovered_run_id is not None:
+                if (
+                    state != "success"
+                    or m["state"] not in {"failed", "timeout", "cancelled", "interrupted"}
+                    or m.get("run_id") != recovered_run_id
+                    or m["author"] not in REMOTE
+                ):
+                    raise ValueError("Recovery requires a linked failed model message")
+                m["recovery"] = dict(
+                    previous_state=m["state"],
+                    previous_error=m.get("error"),
+                    previous_finished_utc=m.get("finished_utc"),
+                    recovered_utc=utc(),
+                    run_id=recovered_run_id,
+                )
+            elif normalize_only:
                 if (
                     state != "success"
                     or m["state"] != "success"
@@ -545,6 +596,7 @@ class Council:
                         if not set(ids) <= included or (m["kind"] == "initial" and ids):
                             raise ValueError("Reference absent from snapshot")
                         return ids
+
                     references = field("references", lambda: links("references", refs), [])
                     answered = field(
                         "answers_to",
@@ -554,20 +606,25 @@ class Council:
                         [],
                     )
                     evidence = field("evidence", lambda: optional_text("evidence", 1500), "")
-                    reason = field("change_reason", lambda: optional_text("change_reason", 1000), "")
+                    reason = field(
+                        "change_reason", lambda: optional_text("change_reason", 1000), ""
+                    )
                     question = field(
                         "question",
-                        lambda: checked(body["question"], 800, "question")
-                        if body.get("question") is not None else None,
+                        lambda: (
+                            checked(body["question"], 800, "question")
+                            if body.get("question") is not None
+                            else None
+                        ),
                         None,
                     )
                     kind = body.get("kind", "observation")
                     if not isinstance(kind, str) or kind not in KINDS:
                         warnings.append("kind")
                         kind = "observation"
-                    if (
-                        kind == "revision" and (not references or not reason)
-                    ) or (kind == "support" and (not references or not evidence)):
+                    if (kind == "revision" and (not references or not reason)) or (
+                        kind == "support" and (not references or not evidence)
+                    ):
                         warnings.append("kind")
                         kind = "observation"
                     m.update(
@@ -583,7 +640,9 @@ class Council:
                     m.pop("content_truncated", None)
                     m.pop("protocol_warning", None)
                     if warnings:
-                        m["protocol_warning"] = "正文已保留，请检查：" + ", ".join(dict.fromkeys(warnings))
+                        m["protocol_warning"] = "正文已保留，请检查：" + ", ".join(
+                            dict.fromkeys(warnings)
+                        )
                     if m["kind"] != "initial":
                         m["kind"] = kind
                 except (ValueError, TypeError, AttributeError, UnicodeError, RecursionError):

@@ -10,7 +10,7 @@ import threading
 import uuid
 
 from .runtime import strict_json, utc
-from .storage import retry_permission, wait_for_write
+from .storage import retry_permission, wait_for_write, writer_claim
 
 MAX_BYTES = 2 * 1024 * 1024
 MAX_MESSAGES = 40
@@ -83,20 +83,12 @@ class Discussions:
             if self.root.is_symlink():
                 raise ValueError("Discussion symlinks are not served")
             self.root.mkdir(parents=True, exist_ok=True)
-            claim = self.root / "write.lock"
-            try:
-                descriptor = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError as error:
-                raise ValueError(
-                    "Discussion store is busy; a stale write.lock needs operator inspection"
-                ) from error
-            try:
-                os.close(descriptor)
-                self._writing_thread = threading.get_ident()
-                yield
-            finally:
-                self._writing_thread = None
-                claim.unlink()
+            with writer_claim(self.root):
+                try:
+                    self._writing_thread = threading.get_ident()
+                    yield
+                finally:
+                    self._writing_thread = None
 
     def save(self, data):
         data["open_questions"] = self.questions(data)
@@ -121,9 +113,11 @@ class Discussions:
         # reading the last complete document after this bounded wait.
         if self._writing_thread != threading.get_ident():
             wait_for_write(self.root / "write.lock")
+
         def bounded_read():
             with self.file(discussion_id).open("rb") as file:
                 return file.read(MAX_BYTES + 1)
+
         raw = retry_permission(bounded_read)
         if len(raw) > MAX_BYTES:
             raise ValueError("Discussion exceeds the read limit")
@@ -456,7 +450,15 @@ class Discussions:
             self.save(data)
 
     def finish(
-        self, discussion_id, message_id, state, content="", error=None, *, normalize_only=False
+        self,
+        discussion_id,
+        message_id,
+        state,
+        content="",
+        error=None,
+        *,
+        normalize_only=False,
+        recovered_run_id=None,
     ):
         with self.writing():
             data = self.read(discussion_id)
@@ -468,10 +470,26 @@ class Discussions:
                 and state == message.get("state") == "success"
                 and message.get("format") == "plain-text"
             )
+            recovering = (
+                recovered_run_id is not None
+                and state == "success"
+                and message.get("state") in {"failed", "timeout", "cancelled", "interrupted"}
+                and message.get("run_id") == recovered_run_id
+            )
+            if recovered_run_id is not None and not recovering:
+                raise ValueError("Recovery requires a linked failed model message")
             if message["author"] != "reviewer" or (
-                message.get("state") != "running" and not reparsing
+                message.get("state") != "running" and not reparsing and not recovering
             ):
                 raise ValueError("Review attempt is not running")
+            if recovering:
+                message["recovery"] = dict(
+                    previous_state=message["state"],
+                    previous_error=message.get("error"),
+                    previous_finished_utc=message.get("finished_utc"),
+                    recovered_utc=utc(),
+                    run_id=recovered_run_id,
+                )
             if state == "success" and data.get("protocol") == "peer-v1":
                 try:
                     envelope = peer_envelope(content)

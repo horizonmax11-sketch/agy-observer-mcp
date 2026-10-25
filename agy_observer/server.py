@@ -107,7 +107,7 @@ def create_server(settings=None):
         )
     )
     def agy_discussion_recover(discussion_id: str) -> dict:
-        """Reconcile an interrupted review with its terminal run; refuses active/nonterminal runs. Never retries or refunds attempts."""
+        """Reconcile interrupted messages or failed delivery with linked terminal runs. A failed message is restored only from a verified matching successful run, retaining recovery audit. Never retries models or refunds attempts."""
         return service.discussion_recover(discussion_id)
 
     @app.tool(
