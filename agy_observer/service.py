@@ -2,12 +2,13 @@
 
 import asyncio
 import math
+import json
 import shutil
 from pathlib import Path
 
 from .config import Settings
 from .discussions import Discussions
-from .council import Council, public
+from .council import Council, public, RESPONSE_SCHEMA
 from .history import History
 from .monitor import Monitor
 from .runtime import RunRecord, capture
@@ -114,6 +115,8 @@ class Service:
                 "-p",
                 prompt,
             ]
+            if council:
+                command.extend(["--json-schema", json.dumps(RESPONSE_SCHEMA, separators=(",", ":"))])
             _, stderr, code, payload = await capture(
                 command,
                 cwd=str(self.settings.workspace),
@@ -177,7 +180,7 @@ class Service:
             raise ValueError("Configured executable must identify agy directly")
         self.monitor.start()
         if self.settings.open_browser:
-            await self.monitor.open(view="discussions")
+            await self.monitor.open(view="discussions", discussion_id=identifier)
         reservations = self.council.reserve(
             identifier,
             participants if participants is not None else ["gemini", "claude"],
@@ -215,7 +218,11 @@ class Service:
                 )
 
         outcomes = await asyncio.gather(*(contribute(*item) for item in reservations))
-        return dict(outcomes=outcomes, discussion=public(self.council.read(identifier)))
+        return dict(
+            outcomes=outcomes,
+            discussion=public(self.council.read(identifier)),
+            discussion_url=self.monitor.discussion_url(identifier),
+        )
 
     async def discussion_turn(self, discussion_id, instruction="", reply_to=None):
         if self.closing or not self.settings.enabled:
@@ -254,14 +261,14 @@ class Service:
         for message in data["messages"]:
             if message.get("state") != "running":
                 if (
-                    data.get("protocol") == "peer-v1"
+                    data.get("protocol") in {"peer-v1", "council-v1"}
                     and message.get("state") == "success"
-                    and message.get("format") == "plain-text"
+                    and message.get("format") in {"plain-text", "council-json-partial", "council-json"}
                     and message.get("run_id")
                 ):
                     status = self.history.status(message["run_id"])
                     if status["state"] == "success":
-                        data = self.discussions.finish(
+                        data = (self.council if council else self.discussions).finish(
                             discussion_id,
                             message["id"],
                             "success",

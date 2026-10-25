@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 import uuid
 
 from .runtime import strict_json, utc
@@ -59,10 +60,22 @@ def peer_envelope(content):
     return value
 
 
+def retry_permission(operation):
+    """Bounded local I/O retry; other errors and persistent denial still surface."""
+    for attempt in range(5):
+        try:
+            return operation()
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.025 * (2 ** attempt))
+
+
 class Discussions:
     def __init__(self, state_dir):
         self.root = Path(state_dir).resolve() / "discussions"
         self.lock = threading.RLock()
+        self._writing_thread = None
         self._summaries = {}
 
     def file(self, discussion_id):
@@ -90,8 +103,10 @@ class Discussions:
                 ) from error
             try:
                 os.close(descriptor)
+                self._writing_thread = threading.get_ident()
                 yield
             finally:
+                self._writing_thread = None
                 claim.unlink()
 
     def save(self, data):
@@ -104,13 +119,26 @@ class Discussions:
         try:
             with temp.open("xb") as file:
                 file.write(raw)
-            os.replace(temp, path)
+            # Windows readers / DrvFS can briefly deny replacement. Keep the old
+            # document intact; retry only this local atomic operation, never a model.
+            retry_permission(lambda: os.replace(temp, path))
         finally:
             temp.unlink(missing_ok=True)
 
     def read(self, discussion_id):
-        with self.file(discussion_id).open("rb") as file:
-            raw = file.read(MAX_BYTES + 1)
+        # Readers in other instances yield to a short write transaction instead
+        # of repeatedly reopening a Windows file awaiting atomic replacement.
+        # No reader lock or data write is needed. A stale claim does not prevent
+        # reading the last complete document after this bounded wait.
+        if self._writing_thread != threading.get_ident():
+            for attempt in range(4):
+                if not (self.root / "write.lock").exists():
+                    break
+                time.sleep(0.025 * (2 ** attempt))
+        def bounded_read():
+            with self.file(discussion_id).open("rb") as file:
+                return file.read(MAX_BYTES + 1)
+        raw = retry_permission(bounded_read)
         if len(raw) > MAX_BYTES:
             raise ValueError("Discussion exceeds the read limit")
         try:

@@ -8,6 +8,7 @@ local operator to run artifacts. Model identity is requested, not authenticated.
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import re
 import uuid
 
 from .discussions import DIALOGUE_STYLE, checked, clipped, peer_envelope, units
@@ -17,12 +18,58 @@ PEERS = {"gpt", "gemini", "claude"}
 REMOTE = {"gemini", "claude"}
 KINDS = {"observation", "question", "challenge", "evidence", "revision", "support", "pass"}
 TERMINAL = {"success", "failed", "cancelled", "timeout", "interrupted"}
+ROLE_RULE = (
+    "分工是本项目的关注重点，不限制你跨角色补充，也不赋予最终裁决权。"
+    "先接住一个具体问题；发现共同前提有误可以直接指出。"
+    "用新增事实、反例、取舍或可执行的验证推进讨论；没有补充可以pass，不必强行赞同或反对。"
+)
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "message": {"type": "string"},
+        "kind": {"type": "string", "enum": sorted(KINDS)},
+        "references": {"type": "array", "items": {"type": "integer"}},
+        "answers_to": {"type": "array", "items": {"type": "integer"}},
+        "evidence": {"type": "string"},
+        "change_reason": {"type": "string"},
+        "question": {"type": ["string", "null"]},
+    },
+    "required": ["message", "kind", "references", "answers_to", "evidence", "change_reason", "question"],
+    "additionalProperties": False,
+}
+
+
+def project_roles(roles):
+    if not isinstance(roles, dict) or set(roles) != PEERS:
+        raise ValueError("roles must contain gpt, gemini and claude")
+    return {p: checked(roles[p], 600, "role") for p in sorted(PEERS)}
+
+
+def council_envelope(content):
+    """AGY may append a schema-normalized copy to a fenced response.
+
+    Accept only two complete, semantically identical objects. Never choose
+    between conflicting replies or guess missing quotes / JSON boundaries.
+    """
+    try:
+        return peer_envelope(content)
+    except ValueError:
+        text = content.strip().replace("\r\n", "\n")
+        if not text.startswith("```json\n") or "\n```\n" not in text:
+            raise
+        first, last = text.split("\n```\n", 1)
+        first = peer_envelope(first + "\n```")
+        last = peer_envelope(last)
+        if not isinstance(first, dict) or first != last:
+            raise ValueError("Conflicting structured replies")
+        return last
 
 
 def validate(data):
     """Validate persisted council records before either API or prompt construction."""
     if not all(isinstance(data.get(key), dict) for key in ("roles", "models", "attempts")):
         raise ValueError("Invalid council metadata")
+    project_roles(data["roles"])
     if (
         set(data.get("roles", {})) != PEERS
         or set(data.get("models", {})) != REMOTE
@@ -136,7 +183,7 @@ class Council:
             raise ValueError("Not a three-participant council")
         return data
 
-    def create(self, goal, facts, models, max_turns_per_model=2, *, kind="三方协作"):
+    def create(self, goal, facts, models, max_turns_per_model=2, *, kind="三方协作", roles=None):
         goal = checked(goal, 2000, "goal")
         facts = checked(facts, 3000, "facts") if facts else "未提供额外材料。"
         if type(max_turns_per_model) is not int or not 1 <= max_turns_per_model <= 8:
@@ -152,7 +199,7 @@ class Council:
             kind=kind,
             phase="collect",
             closed=False,
-            roles={
+            roles=project_roles(roles) if roles is not None else {
                 p: "可开题、补证、质疑、修正和提出替代路径；关注角度按问题轮换，无固定裁决权。"
                 for p in sorted(PEERS)
             },
@@ -279,6 +326,7 @@ class Council:
             )
             instruction = "先只看原始需求，说说最关键的一点、一个容易漏掉的角度，以及你想弄清楚的问题。简短交流，先不展开完整方案。"
         else:
+            material["role"] = data["roles"][participant]
             chosen = {m["id"] for m in data["messages"][-6:]}
             chosen.update(
                 m["id"]
@@ -293,8 +341,8 @@ class Council:
             questions = data.get("open_questions", [])
             questions = sorted(questions, key=lambda q: q["message_id"] != reply_to)[:3]
             chosen.update(q["message_id"] for q in questions)
-            # Neutral labels reduce brand cues; chronological order stays auditable.
-            aliases = {"gpt": "A", "gemini": "B", "claude": "C"}
+            # Match the user's visible model names; initial contexts remain isolated.
+            aliases = {"gpt": "GPT", "gemini": "Gemini", "claude": "Claude"}
             material["self"] = aliases[participant]
             material["messages"] = []
             truncated = []
@@ -325,7 +373,8 @@ class Council:
             material.update(
                 context=manifest, focus=focus, reply_to=reply_to, plan_version=data["plan_version"]
             )
-            instruction = (
+            instruction = ROLE_RULE + (
+                "本轮优先关注材料中的role，同时保留自己的独立判断。"
                 "接着大家的讨论推进一点：补充信息、提出不同看法、追问或调整想法都可以；没有补充可pass。"
                 "也留意大家是否一起漏看了某个前提，用具体理由和证据作判断。"
                 "references记录你回应的发言；改变想法时，说明是哪一点让你调整了判断。"
@@ -340,6 +389,7 @@ class Council:
             '"references":[],"evidence":"新增依据或具体待查项，没有则空串","change_reason":"调整想法的原因，没有则空串",'
             '"question":null,"answers_to":[]}。revision须references与change_reason；support须references与evidence。'
             "首轮references和answers_to必须为空。发言不超过300字；依据和原因与正文重复时简短记录即可。\n"
+            "不要使用代码围栏；message只写自然发言，不要把JSON对象再塞进message。正文引用词语优先使用中文引号。\n"
             + json.dumps(material, ensure_ascii=False)
         )
         if units(prompt) > 16000:
@@ -410,41 +460,73 @@ class Council:
             data["updated_utc"] = utc()
             self.store.save(data)
 
-    def finish(self, identifier, message_id, state, content="", error=None):
+    def finish(self, identifier, message_id, state, content="", error=None, *, normalize_only=False):
         if state not in TERMINAL:
             raise ValueError("Invalid terminal state")
         with self.store.writing():
             data = self.read(identifier)
             m = data["messages"][message_id - 1]
-            if m["state"] != "running":
+            original = deepcopy(m)
+            if normalize_only:
+                if (
+                    state != "success"
+                    or m["state"] != "success"
+                    or m.get("format") not in {"plain-text", "council-json-partial", "council-json"}
+                ):
+                    raise ValueError("Only successful model messages can be normalized")
+            elif m["state"] != "running":
                 raise ValueError("Council message is not pending")
             if state == "success":
                 try:
-                    body = peer_envelope(content)
+                    body = council_envelope(content)
                     text = checked(body.get("message"), 4000, "message")
-                    kind = body.get("kind", "observation")
-                    if kind not in KINDS:
-                        raise ValueError("Invalid contribution kind")
-                    references = refs(data, body.get("references", []), before=message_id)
-                    answered = answers(
-                        data, m["author"], body.get("answers_to", []), before=message_id
-                    )
+                    warnings = []
+                    if re.match(r'^\s*(?:```json\s*)?\{\s*"message"\s*:', text):
+                        warnings.append("message包含JSON包装，保留正文原文")
+
+                    def field(name, parse, default):
+                        try:
+                            return parse()
+                        except (ValueError, TypeError, AttributeError, UnicodeError):
+                            warnings.append(name)
+                            return default
+
+                    def optional_text(name, limit):
+                        value = body.get(name)
+                        return "" if value in (None, "") else checked(value, limit, name)
+
                     included = set(m["context"]["included_ids"])
-                    if not set(references + answered) <= included:
-                        raise ValueError("Cannot cite a message absent from the supplied snapshot")
-                    if m["kind"] == "initial" and (references or answered):
-                        raise ValueError("Initial judgment cannot reference peers")
-                    evidence = body.get("evidence", "")
-                    reason = body.get("change_reason", "")
-                    evidence = checked(evidence, 1500, "evidence") if evidence else ""
-                    reason = checked(reason, 1000, "change_reason") if reason else ""
-                    if kind == "revision" and (not references or not reason):
-                        raise ValueError("Revision requires references and reason")
-                    if kind == "support" and (not references or not evidence):
-                        raise ValueError("Support requires references and grounds")
-                    question = body.get("question")
-                    if question is not None:
-                        question = checked(question, 800, "question")
+
+                    def links(name, parse):
+                        ids = parse(data, body.get(name, []), before=message_id)
+                        if not set(ids) <= included or (m["kind"] == "initial" and ids):
+                            raise ValueError("Reference absent from snapshot")
+                        return ids
+                    references = field("references", lambda: links("references", refs), [])
+                    answered = field(
+                        "answers_to",
+                        lambda: links(
+                            "answers_to", lambda d, ids, **kw: answers(d, m["author"], ids, **kw)
+                        ),
+                        [],
+                    )
+                    evidence = field("evidence", lambda: optional_text("evidence", 1500), "")
+                    reason = field("change_reason", lambda: optional_text("change_reason", 1000), "")
+                    question = field(
+                        "question",
+                        lambda: checked(body["question"], 800, "question")
+                        if body.get("question") is not None else None,
+                        None,
+                    )
+                    kind = body.get("kind", "observation")
+                    if not isinstance(kind, str) or kind not in KINDS:
+                        warnings.append("kind")
+                        kind = "observation"
+                    if (
+                        kind == "revision" and (not references or not reason)
+                    ) or (kind == "support" and (not references or not evidence)):
+                        warnings.append("kind")
+                        kind = "observation"
                     m.update(
                         content=text,
                         contribution_kind=kind,
@@ -453,8 +535,12 @@ class Council:
                         evidence=evidence,
                         change_reason=reason,
                         question=question,
-                        format="council-json",
+                        format="council-json-partial" if warnings else "council-json",
                     )
+                    m.pop("content_truncated", None)
+                    m.pop("protocol_warning", None)
+                    if warnings:
+                        m["protocol_warning"] = "正文已保留，请检查：" + ", ".join(dict.fromkeys(warnings))
                     if m["kind"] != "initial":
                         m["kind"] = kind
                 except (ValueError, TypeError, AttributeError, UnicodeError, RecursionError):
@@ -462,9 +548,13 @@ class Council:
                         content=clipped(content, 8000),
                         content_truncated=units(content) > 8000,
                         format="plain-text",
-                        protocol_warning="保留原文；未确认引用、依据或问题回应，不推断共识。",
+                        protocol_warning="回复格式未解析，已保留原文，可在调用记录中查看。",
                     )
-            m.update(state=state, error=error, finished_utc=utc())
+            m.update(state=state, error=error)
+            if not normalize_only:
+                m["finished_utc"] = utc()
+            elif m == original:
+                return public(data)
             data["updated_utc"] = utc()
             self.store.save(data)
             return public(data)

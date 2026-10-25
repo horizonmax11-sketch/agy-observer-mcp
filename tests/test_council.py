@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from agy_observer.config import Settings
-from agy_observer.council import Council, public
+from agy_observer.council import Council, public, council_envelope
 from agy_observer.discussions import Discussions
 from agy_observer.runtime import RunRecord
 from agy_observer.service import Service
@@ -135,20 +135,68 @@ class CouncilTests(unittest.TestCase):
         self.assertTrue(data["closed"])
         self.assertEqual(len(data["open_questions"]), 1)
 
-    def test_invalid_model_refs_preserve_original_and_never_resolve_question(self):
+    def test_invalid_metadata_keeps_body_and_valid_question(self):
         self.initial()
         self.council.reveal(self.identifier)
         batch = self.council.reserve(self.identifier, ["claude", "gemini"])
         for _, message_id, prompt, _ in batch:
-            self.assertIn('"author": "A"', prompt)
+            self.assertIn('"author": "GPT"', prompt)
             self.assertNotIn("claude-test", prompt)
             bad = json.dumps(
-                dict(message="invalid answer", kind="revision", references=[99], answers_to=[1])
+                dict(message="useful body", kind="revision", references=[99], answers_to=[99], question="new question?")
             )
             self.council.finish(self.identifier, message_id, "success", bad)
         data = self.council.read(self.identifier)
-        self.assertEqual(len(data["open_questions"]), 1)
-        self.assertEqual(data["messages"][-1]["format"], "plain-text")
+        self.assertEqual(len(data["open_questions"]), 3)
+        self.assertEqual(data["messages"][-1]["content"], "useful body")
+        self.assertEqual(data["messages"][-1]["answers_to"], [])
+        self.assertEqual(data["messages"][-1]["kind"], "observation")
+        self.assertIn("answers_to", data["messages"][-1]["protocol_warning"])
+
+    def test_malformed_json_is_not_repaired_by_guessing_quotes(self):
+        self.council.note(self.identifier, "initial", "initial")
+        item = self.council.reserve(self.identifier, ["claude"])[0]
+        raw = '{"message":"say "hello" here","question":"why?"}'
+        self.council.finish(self.identifier, item[1], "success", raw)
+        message = self.council.read(self.identifier)["messages"][-1]
+        self.assertEqual(message["content"], raw)
+        self.assertEqual(message["format"], "plain-text")
+        self.assertFalse(message.get("question"))
+
+    def test_schema_duplicate_requires_two_identical_complete_objects(self):
+        body = envelope("readable", question="why?")
+        normalized = json.dumps(json.loads(body), sort_keys=True)
+        self.assertEqual(council_envelope("```json\n" + body + "\n```\n" + normalized), json.loads(body))
+        for suffix in (envelope("different"), normalized + "\nextra", "not json"):
+            with self.assertRaises(ValueError):
+                council_envelope("```json\n" + body + "\n```\n" + suffix)
+
+    def test_nested_malformed_body_is_preserved_with_visible_format_warning(self):
+        item = self.council.reserve(self.identifier, ["claude"])[0]
+        raw = '{"message":"a "quote" inside","kind":"observation"}'
+        self.council.finish(self.identifier, item[1], "success", envelope(raw))
+        message = self.council.read(self.identifier)["messages"][-1]
+        self.assertEqual(message["content"], raw)
+        self.assertEqual(message["format"], "council-json-partial")
+        self.assertIn("message", message["protocol_warning"])
+
+    def test_project_roles_activate_after_independent_initials(self):
+        roles = {"gpt": "implementation tradeoffs", "gemini": "user journey", "claude": "counterexample design"}
+        identifier = self.council.create("role task", "facts", {"gemini": "g", "claude": "c"}, roles=roles)["discussion_id"]
+        self.council.note(identifier, "initial", "initial")
+        batch = self.council.reserve(identifier, ["gemini", "claude"])
+        self.assertEqual(batch[0][2], batch[1][2])
+        self.assertNotIn("user journey", batch[0][2])
+        for _, mid, _, _ in batch:
+            self.council.finish(identifier, mid, "success", envelope())
+        self.council.reveal(identifier)
+        batch = self.council.reserve(identifier, ["gemini", "claude"])
+        self.assertIn("user journey", batch[0][2])
+        self.assertNotIn("counterexample design", batch[0][2])
+        self.assertIn("counterexample design", batch[1][2])
+        for invalid in ({"gpt": "only one"}, {**roles, "claude": "x" * 601}, {**roles, "gemini": ""}):
+            with self.assertRaises(ValueError):
+                self.council.create("bad roles", "", {"gemini": "g", "claude": "c"}, roles=invalid)
 
     def test_explicit_answers_from_either_remote_do_not_imply_agreement(self):
         self.initial()
@@ -193,7 +241,8 @@ class CouncilServiceTests(unittest.IsolatedAsyncioTestCase):
 
         async def capture(command, **kwargs):
             model = command[command.index("--model") + 1]
-            prompts.append(command[-1])
+            prompts.append(command[command.index("-p") + 1])
+            self.assertIn("--json-schema", command)
             started.add(model)
             if len(started) == 2:
                 both.set()
@@ -206,6 +255,7 @@ class CouncilServiceTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await self.service.council_round(self.identifier)
         self.assertEqual(calls.call_count, 2)
+        self.assertTrue(result["discussion_url"].endswith("?view=discussions&discussion_id=" + self.identifier))
         self.assertEqual(prompts[0], prompts[1])
         self.assertEqual(len(started), 2)
         self.assertEqual([m["state"] for m in result["outcomes"]], ["success", "success"])
@@ -305,6 +355,23 @@ class CouncilServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m["state"] for m in result["messages"]][1:], ["success", "interrupted"])
         self.assertEqual(result, self.service.discussion_recover(self.identifier))
         await disabled.close()
+
+    async def test_recovery_extracts_valid_body_without_repeating_model(self):
+        batch = self.service.council.reserve(self.identifier, ["gemini", "claude"])
+        for _, mid, _, model in batch:
+            record = RunRecord(self.service.history.root, "synthetic", model)
+            self.service.council.link(self.identifier, mid, record.run_id, model)
+            record.finish("success", response=envelope("readable reply", question="new question?"))
+            self.service.council.finish(self.identifier, mid, "success", "legacy broken envelope")
+        before = self.service.council.read(self.identifier)
+        with patch("agy_observer.service.capture") as capture:
+            self.service.discussion_recover(self.identifier)
+        after = self.service.council.read(self.identifier)
+        self.assertEqual(after["attempts"], before["attempts"])
+        for old, new in zip(before["messages"][1:], after["messages"][1:]):
+            self.assertEqual(new["content"], "readable reply")
+            self.assertEqual(new["finished_utc"], old["finished_utc"])
+        capture.assert_not_called()
 
     async def test_http_never_exposes_sealed_initial_content(self):
         self.service.monitor.start()

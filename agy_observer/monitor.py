@@ -29,6 +29,10 @@ class Monitor:
     def url(self):
         return f"http://127.0.0.1:{self.server.server_port}/" if self.server else None
 
+    def discussion_url(self, identifier):
+        self.discussions.file(identifier)  # Validate before interpolation / shell opening.
+        return self.start() + "?view=discussions&discussion_id=" + identifier
+
     def start(self):
         if self.server:
             return self.url
@@ -97,11 +101,14 @@ class Monitor:
         self.thread.start()
         return self.url
 
-    async def open(self, include_tests=False, view=None):
+    async def open(self, include_tests=False, view=None, discussion_id=None):
         url = self.start()
         query = (["tests=1"] if include_tests else []) + (
             ["view=discussions"] if view == "discussions" else []
         )
+        if discussion_id is not None:
+            self.discussions.file(discussion_id)
+            query = [q for q in query if q != "view=discussions"] + ["view=discussions", "discussion_id=" + discussion_id]
         if query:
             url += "?" + "&".join(query)
         if os.name == "nt":

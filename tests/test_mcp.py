@@ -99,9 +99,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertEqual(json.loads(loaded.content[0].text)["model_attempts"], 0)
                     created = await session.call_tool(
-                        "agy_council_create", {"goal": "synthetic council"}
+                        "agy_council_create", {"goal": "synthetic council", "roles": {"gpt": "implementation", "gemini": "usability", "claude": "alternatives"}}
                     )
                     identifier = json.loads(created.content[0].text)["discussion_id"]
+                    self.assertEqual(json.loads(created.content[0].text)["roles"]["claude"], "alternatives")
                     noted = await session.call_tool(
                         "agy_council_note",
                         {

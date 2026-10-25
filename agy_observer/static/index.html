@@ -45,7 +45,7 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
   <div id="runs"></div><div id="sessions" hidden></div>
  </nav>
  <article>
- <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><details><summary>参与方式</summary><dl id="roles"></dl><p class="muted">模型名称取自请求记录，GPT 发言由客户端提交。每条发言的“依据与记录”保留完整型号、来源和上下文。</p></details><p class="muted" id="discussion-help">每轮由客户端发起。</p><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
+ <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><details><summary id="role-heading">参与方式</summary><dl id="roles"></dl><p class="muted">关注重点可以跨越，不限制补充和质疑。模型名称取自请求记录，GPT 发言由客户端提交。每条发言的“依据与记录”保留完整型号、来源和上下文。</p></details><p class="muted" id="discussion-help">每轮由客户端发起。</p><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
  <section id="single">
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
   <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
@@ -58,7 +58,7 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
 </main>
 <script>
 let selected=null, pinned=false, allRows=[], detailKey=null, eventKey=null;
-let selectedDiscussion=null, discussionKey=null, discussionData=null;
+let selectedDiscussion=new URLSearchParams(location.search).get('discussion_id'), discussionKey=null, discussionData=null;
 const sessionButtons=new Map();
 const buttons=new Map(), el=id=>document.getElementById(id);
 const states={created:'准备中',running:'生成中',success:'已完成',failed:'失败',timeout:'超时',cancelled:'已取消'};
@@ -67,13 +67,18 @@ const kindLabel=row=>row.kind==='离线夹具'?'离线测试':row.kind;
 const modelName=model=>!model?'未记录模型':/^gemini(?:-|$)/i.test(model)?'Gemini':/^claude(?:-|$)/i.test(model)?'Claude':/^gpt(?:-|$)/i.test(model)?'GPT':model;
 const isTest=row=>row.kind.includes('离线')||row.kind.includes('模拟');
 const fail=error=>txt('connection','连接中断：'+error.message);
-el('view').value=new URLSearchParams(location.search).get('view')==='discussions'?'discussions':'runs';
+el('view').value=selectedDiscussion||new URLSearchParams(location.search).get('view')==='discussions'?'discussions':'runs';
+function updateAddress(){
+ const url=new URL(location.href);url.searchParams.set('view',el('view').value);
+ if(selectedDiscussion&&el('view').value==='discussions')url.searchParams.set('discussion_id',selectedDiscussion);else url.searchParams.delete('discussion_id');
+ history.replaceState(null,'',url);
+}
 function switchView(){
  const discussion=el('view').value==='discussions';
  el('runs').hidden=discussion;el('sessions').hidden=!discussion;
  el('single').hidden=discussion;el('discussion').hidden=!discussion;
 }
-el('view').onchange=switchView;switchView();
+el('view').onchange=()=>{switchView();updateAddress()};switchView();
 el('show-tests').checked=new URLSearchParams(location.search).get('tests')==='1';
 async function read(path){const response=await fetch(path);if(!response.ok)throw Error(response.status);return response.json()}
 function clearDetail(){
@@ -131,6 +136,7 @@ function fillDiscussion(data){
  const council=data.protocol==='council-v1',peer=data.protocol==='peer-v1';
  const recordedModels=[...new Set(data.messages.filter(m=>m.author==='reviewer'&&m.model_requested).map(m=>modelName(m.model_requested)))];
  const who=(author,model)=>council?({gpt:'GPT',gemini:'Gemini',claude:'Claude'}[author]||author):author==='lead'?'GPT':model?modelName(model):recordedModels.join(' / ')||'未记录模型';
+ txt('role-heading',council?'项目分工'+(data.phase==='collect'?'（首轮公开后启用）':''):'参与方式');
  txt('discussion-help',isTest(data)?'离线演示：这里都是示例内容，没有调用模型。':council?'先各自想一想，再一起把方案改好。有不同看法可以直接提出，也可以补充信息或调整想法。':`${who('lead')} 与 ${who('reviewer')} 一起讨论。${peer?'可以接着聊、问问题，也可以换个角度看看。':''}`);
  txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · Gemini '+data.attempts.gemini+'/'+data.max_turns_per_model+' · Claude '+data.attempts.claude+'/'+data.max_turns_per_model:''}`);
  el('roles').replaceChildren();
@@ -157,6 +163,7 @@ function fillDiscussion(data){
   const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'选择：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');if(reference.textContent)record.append(reference);
   if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮话题：'+row.instruction;record.append(instruction)}
   const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||'等待公开回复；此轮尚未验收。';card.append(content);
+  if(row.format==='plain-text'||row.protocol_warning?.includes('message包含')){const warning=document.createElement('p');warning.className='muted';warning.textContent='这条回复仍带有格式包装，已保留原文。';card.append(warning)}
   for(const [label,value] of [['接着这些发言',(row.references||[]).map(i=>'#'+i).join('、')],['补充依据',row.evidence],['调整原因',row.change_reason],['首轮上下文',row.initial_context?({fresh:'新上下文（客户端提交项按其声明记录）',history_visible:'已看过历史',unknown:'未确认'}[row.initial_context]||row.initial_context):'']]){if(value){const p=document.createElement('p');p.textContent=label+'：'+value;record.append(p)}}
   if(row.question&&row.kind!=='question'){const q=document.createElement('p');q.textContent='想问一下：'+row.question;card.append(q)}
   if(row.answers_to?.length){const a=document.createElement('small');a.textContent='回应的问题：'+row.answers_to.map(i=>'#'+i).join('、');record.append(a)}
@@ -175,10 +182,17 @@ async function updateDiscussions(rows){
  for(const [id,button] of sessionButtons)if(!known.has(id)){button.remove();sessionButtons.delete(id)}
  for(let index=0;index<rows.length;index++){
   const row=rows[index];let button=sessionButtons.get(row.discussion_id);
-  if(!button){button=document.createElement('button');button.type='button';button.onclick=()=>{selectedDiscussion=row.discussion_id;discussionKey=null};sessionButtons.set(row.discussion_id,button);el('sessions').insertBefore(button,el('sessions').children[index]||null)}
+  if(!button){button=document.createElement('button');button.type='button';button.onclick=()=>{selectedDiscussion=row.discussion_id;discussionKey=null;updateAddress()};sessionButtons.set(row.discussion_id,button);el('sessions').insertBefore(button,el('sessions').children[index]||null)}
   button.hidden=!visible.includes(row);const label=`${row.closed?'已归档':'协作中'} · 待答${row.open_questions_count||0} · ${row.model_attempts}/${row.max_model_turns}次尝试\n${row.goal_preview}`;if(button.textContent!==label)button.textContent=label;
  }
- if(!visible.some(row=>row.discussion_id===selectedDiscussion)){selectedDiscussion=visible[0]?.discussion_id;discussionKey=null}
+ if(!visible.some(row=>row.discussion_id===selectedDiscussion)){
+  if(selectedDiscussion){
+   discussionKey=null;discussionData=null;txt('goal','找不到此讨论，或已被离线测试筛选隐藏。');txt('discussion-state','未找到');txt('discussion-help','请从左侧选择讨论，或检查“显示离线测试”。');
+   for(const id of ['roles','shared-plan','questions','messages'])el(id).replaceChildren();
+   for(const button of sessionButtons.values())button.setAttribute('aria-current','false');return;
+  }
+  selectedDiscussion=visible[0]?.discussion_id;discussionKey=null;updateAddress();
+ }
  for(const [id,button] of sessionButtons)button.setAttribute('aria-current',id===selectedDiscussion);
  if(!selectedDiscussion){discussionKey=null;discussionData=null;txt('goal','暂无协作任务');txt('discussion-state','暂无记录');txt('discussion-help','创建共同目标后，任一伙伴都可以先开题。');el('roles').replaceChildren();el('shared-plan').replaceChildren();el('questions').replaceChildren();el('messages').replaceChildren();return}
  const row=visible.find(row=>row.discussion_id===selectedDiscussion),id=selectedDiscussion,key=id+':'+row.updated_utc;

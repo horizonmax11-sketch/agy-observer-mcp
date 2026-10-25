@@ -113,13 +113,19 @@ def create_server(settings=None):
     @app.tool(
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
     )
-    def agy_council_create(goal: str, facts: str = "", max_turns_per_model: int = 2) -> dict:
-        """Create a GPT/Gemini/Claude task with sealed initial judgments and separate 1..8 AGY attempt budgets. No model call."""
+    def agy_council_create(
+        goal: str,
+        facts: str = "",
+        max_turns_per_model: int = 2,
+        roles: dict[str, str] | None = None,
+    ) -> dict:
+        """Create a task with sealed initial judgments and separate 1..8 AGY budgets. Optional roles must map gpt/gemini/claude to project briefs (max 600 UTF-16 units each); applied AFTER reveal only. Client GPT should also follow its brief then, with freedom to question across roles. No model call."""
         return service.council.create(
             goal,
             facts,
             {"gemini": service.settings.model, "claude": service.settings.claude_model},
             max_turns_per_model,
+            roles=roles,
         )
 
     @app.tool(

@@ -1,10 +1,12 @@
 """No model calls: exercise collaboration via store, service and read-only HTTP seams."""
 
 import asyncio
+import errno
 import http.client
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -27,6 +29,63 @@ class DiscussionTests(unittest.TestCase):
 
     def proposal(self):
         return self.store.note(self.identifier, "synthetic proposal", "proposal")
+
+    def test_transient_replace_denial_retries_same_atomic_write(self):
+        import os
+        replace = os.replace
+        before = self.store.file(self.identifier).read_bytes()
+        def occupied(source, target):
+            self.assertEqual(self.store.file(self.identifier).read_bytes(), before)
+            return replace(source, target)
+        with patch("agy_observer.discussions.os.replace") as mocked:
+            def retry(source, target):
+                if mocked.call_count < 3:
+                    raise PermissionError(errno.EACCES, "busy")
+                return occupied(source, target)
+            mocked.side_effect = retry
+            result = self.proposal()
+        self.assertEqual(mocked.call_count, 3)
+        self.assertEqual(self.store.read(self.identifier), result)
+        self.assertFalse(list(self.store.root.glob("*.tmp")))
+
+    def test_persistent_replace_failure_preserves_old_document_and_releases_lock(self):
+        before = self.store.file(self.identifier).read_bytes()
+        with patch("agy_observer.discussions.os.replace", side_effect=PermissionError(errno.EACCES, "busy")), patch("agy_observer.discussions.time.sleep"):
+            with self.assertRaises(PermissionError):
+                self.proposal()
+        self.assertEqual(self.store.file(self.identifier).read_bytes(), before)
+        self.assertFalse(list(self.store.root.glob("*.tmp")))
+        self.assertFalse((self.store.root / "write.lock").exists())
+
+    def test_reader_observes_only_complete_documents_during_replacement(self):
+        stop = threading.Event()
+        ready = threading.Event()
+        errors = []
+        viewing = Discussions(self.temp.name)  # Monitor and service use separate stores.
+        def read_continuously():
+            ready.set()
+            while not stop.is_set():
+                try:
+                    data = viewing.read(self.identifier)
+                    self.assertEqual(data["discussion_id"], self.identifier)
+                    self.assertTrue(data["goal"].startswith("synthetic"))
+                except BaseException as error:
+                    errors.append(error)
+                    return
+        reader = threading.Thread(target=read_continuously)
+        reader.start()
+        try:
+            self.assertTrue(ready.wait(2))
+            for i in range(40):
+                with self.store.writing():
+                    data = self.store.read(self.identifier)
+                    data["goal"] = "synthetic " + str(i)
+                    self.store.save(data)
+        finally:
+            stop.set()
+            reader.join(3)
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(errors, [])
 
     def test_budget_roles_and_closed_summary(self):
         self.proposal()
