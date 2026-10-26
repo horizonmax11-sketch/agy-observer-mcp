@@ -140,7 +140,7 @@ class CouncilTests(unittest.TestCase):
         self.council.reveal(self.identifier)
         batch = self.council.reserve(self.identifier, ["claude", "gemini"])
         for _, message_id, prompt, _ in batch:
-            self.assertIn('"author": "GPT"', prompt)
+            self.assertIn('"author": "GPT（客户端）"', prompt)
             self.assertNotIn("claude-test", prompt)
             bad = json.dumps(
                 dict(message="useful body", kind="revision", references=[99], answers_to=[99], question="new question?")

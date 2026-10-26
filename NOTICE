@@ -13,3 +13,10 @@ configuration, MCP tools, monitor lifecycle, packaging, and portable tests were
 rewritten for this standalone distribution. The original Apache-2.0 license is
 included. No affiliation with Google, Antigravity, OpenAI, or the PAL maintainers
 is implied.
+
+Version 0.8.0 restores the command-builder/parser separation and Claude/Codex
+message extraction concepts from PAL's clink/agents and clink/parsers (same
+upstream revision). They are adapted to bounded streaming, explicit channel and
+participant provenance, strict terminal-state validation and the standalone
+discussion store. PAL's permissive Claude/Codex default arguments, raw-event
+retention and recovery of unsuccessful CLI runs are intentionally not retained.

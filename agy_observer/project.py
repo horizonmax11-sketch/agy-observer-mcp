@@ -9,35 +9,46 @@ import json
 
 from .discussions import checked, units
 from .runtime import utc
+from .channels import LABELS
 
 PEERS = {"gpt", "gemini", "claude"}
+
+
+def peers(data):
+    return set(data.get("participants", PEERS))
+
+
 BRIEF_FIELDS = {"stage", "materials", "success_criteria", "constraints", "unknowns"}
 ROLE_FIELDS = {"role", "focus", "output", "reason"}
 
 
 def brief(value):
     if not isinstance(value, dict) or set(value) != BRIEF_FIELDS:
-        raise ValueError("project must contain stage, materials, success_criteria, constraints, unknowns")
+        raise ValueError(
+            "project must contain stage, materials, success_criteria, constraints, unknowns"
+        )
     result = {key: checked(value[key], 2000, key) for key in sorted(BRIEF_FIELDS)}
     if units(json.dumps(result, ensure_ascii=False)) > 3000:
         raise ValueError("Project brief exceeds 3000 UTF-16 units; narrow the supplied material")
     return result
 
 
-def assignments(value):
-    if not isinstance(value, dict) or set(value) != PEERS:
-        raise ValueError("Assignments must contain gpt, gemini and claude")
+def assignments(value, participants=PEERS):
+    if not isinstance(value, dict) or set(value) != set(participants):
+        raise ValueError("Assignments must cover every selected task participant")
     result = {}
-    for peer in sorted(PEERS):
+    for peer in sorted(participants):
         spec = value[peer]
         if not isinstance(spec, dict) or set(spec) != ROLE_FIELDS:
             raise ValueError("Each assignment needs role, focus, output and reason")
         result[peer] = {
-            key: checked(spec[key], {"role": 80, "focus": 200, "output": 200, "reason": 300}[key], key)
+            key: checked(
+                spec[key], {"role": 80, "focus": 200, "output": 200, "reason": 300}[key], key
+            )
             for key in sorted(ROLE_FIELDS)
         }
-    if len({spec["role"].casefold() for spec in result.values()}) != 3:
-        raise ValueError("Choose three distinct project roles")
+    if len({spec["role"].casefold() for spec in result.values()}) != len(participants):
+        raise ValueError("Choose distinct project roles for the selected participants")
     return result
 
 
@@ -77,7 +88,14 @@ def validate(data):
     previous_id = 0
     for index, entry in enumerate(versions, 1):
         fields = {
-            "version", "stage", "brief", "assignments", "rationale", "references", "message_id", "time_utc"
+            "version",
+            "stage",
+            "brief",
+            "assignments",
+            "rationale",
+            "references",
+            "message_id",
+            "time_utc",
         }
         if not isinstance(entry, dict) or set(entry) not in (fields, fields | {"prompts"}):
             raise ValueError("Invalid role version")
@@ -87,9 +105,9 @@ def validate(data):
         checked(entry["rationale"], 1000, "rationale")
         checked(entry["time_utc"], 80, "time_utc")
         checked_brief = brief(entry["brief"])
-        assignments(entry["assignments"])
+        assignments(entry["assignments"], peers(data))
         if "prompts" in entry:
-            if not isinstance(entry["prompts"], dict) or set(entry["prompts"]) != PEERS:
+            if not isinstance(entry["prompts"], dict) or set(entry["prompts"]) != peers(data):
                 raise ValueError("Invalid role prompt snapshot")
             for value in entry["prompts"].values():
                 checked(value, 600, "role prompt")
@@ -127,12 +145,14 @@ class ProjectWorkflow:
     def __init__(self, council):
         self.council = council
 
-    def assign(self, identifier, roles, stage_name, rationale, references, expected_version, updates=None):
-        specs = assignments(roles)
+    def assign(
+        self, identifier, roles, stage_name, rationale, references, expected_version, updates=None
+    ):
         stage_name = checked(stage_name, 300, "stage")
         rationale = checked(rationale, 1000, "rationale")
         with self.council.store.writing():
             data = self.council.read(identifier)
+            specs = assignments(roles, peers(data))
             self.council.writable(data)
             if "project" not in data or data["phase"] != "discuss":
                 raise ValueError("Reveal all three project understandings before assigning roles")
@@ -145,15 +165,20 @@ class ProjectWorkflow:
             from .council import refs
 
             references = refs(data, references)
-            if not references or any(data["messages"][i - 1]["state"] != "success" for i in references):
+            if not references or any(
+                data["messages"][i - 1]["state"] != "success" for i in references
+            ):
                 raise ValueError("Role assignments need successful source contributions")
             if not old_version:
                 authors = {
-                    data["messages"][i - 1]["author"] for i in references
+                    data["messages"][i - 1]["author"]
+                    for i in references
                     if data["messages"][i - 1]["kind"] == "initial"
                 }
-                if authors != PEERS:
-                    raise ValueError("First assignment must draw on all three initial understandings")
+                if authors != peers(data):
+                    raise ValueError(
+                        "First assignment must draw on all three initial understandings"
+                    )
             revised = deepcopy(current_brief(data))
             if updates is not None:
                 if not isinstance(updates, dict) or not set(updates) <= BRIEF_FIELDS:
@@ -165,20 +190,43 @@ class ProjectWorkflow:
             message_id = len(data["messages"]) + 1
             now = utc()
             entry = dict(
-                version=n, stage=stage_name, brief=revised, assignments=specs,
-                rationale=rationale, references=references, message_id=message_id, time_utc=now,
+                version=n,
+                stage=stage_name,
+                brief=revised,
+                assignments=specs,
+                rationale=rationale,
+                references=references,
+                message_id=message_id,
+                time_utc=now,
                 prompts=prompts(specs),
             )
             data["project"]["role_versions"].append(entry)
             data["roles"] = deepcopy(entry["prompts"])
-            content = f"阶段：{stage_name}\n" + "\n".join(
-                f"{name}：{specs[p]['role']}；重点：{specs[p]['focus']}；产出：{specs[p]['output']}"
-                for p, name in (("gpt", "GPT"), ("gemini", "Gemini"), ("claude", "Claude"))
-            ) + "\n选择及调整原因：" + rationale
-            data["messages"].append(dict(
-                id=message_id, author="gpt", source="client", kind="roles", state="success",
-                content=content, references=references, answers_to=[], role_version=n, time_utc=now,
-            ))
+            content = (
+                f"阶段：{stage_name}\n"
+                + "\n".join(
+                    f"{name}：{specs[p]['role']}；重点：{specs[p]['focus']}；产出：{specs[p]['output']}"
+                    for p, name in ((p, LABELS[p]) for p in sorted(peers(data)))
+                )
+                + "\n选择及调整原因："
+                + rationale
+            )
+            data["messages"].append(
+                dict(
+                    id=message_id,
+                    author="gpt",
+                    source="client",
+                    channel="client",
+                    participant="gpt",
+                    kind="roles",
+                    state="success",
+                    content=content,
+                    references=references,
+                    answers_to=[],
+                    role_version=n,
+                    time_utc=now,
+                )
+            )
             data["updated_utc"] = now
             self.council.store.save(data)
             from .council import public

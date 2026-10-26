@@ -1,6 +1,8 @@
 """STDIO MCP entry point. Application logs must never be printed to stdout."""
 
 from contextlib import asynccontextmanager
+import os
+import shutil
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
@@ -27,9 +29,14 @@ def create_server(settings=None):
             readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
         )
     )
-    async def agy_run(prompt: str) -> dict:
-        """Send one authorized prompt to the configured CLI model; may incur cost and allow CLI tools. No retries."""
-        return await service.run(prompt)
+    async def agy_run(
+        prompt: str,
+        participant: str = "gemini",
+        channel: str | None = None,
+        model: str | None = None,
+    ) -> dict:
+        """Send one authorized request. participant: gemini/claude/codex (never client gpt); channel: antigravity/claude_code/codex_cli as supported. Default Gemini via Antigravity stays compatible. A channel override needs its explicit model; Claude requires Opus. Missing CLI/login fails without fallback/retry. May incur cost."""
+        return await service.run(prompt, participant=participant, channel=channel, model=model)
 
     @app.tool(
         annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
@@ -96,10 +103,17 @@ def create_server(settings=None):
         )
     )
     async def agy_discussion_turn(
-        discussion_id: str, instruction: str = "", reply_to: int | None = None
+        discussion_id: str,
+        instruction: str = "",
+        reply_to: int | None = None,
+        participant: str = "gemini",
+        channel: str | None = None,
+        model: str | None = None,
     ) -> dict:
         """Yield ONE authorized peer turn using bounded shared context. Instruction is optional; the peer may initiate questions or proposals, including the first turn. Failure/cancellation consumes an attempt; no automatic turns/retries. May incur cost and CLI side effects."""
-        return await service.discussion_turn(discussion_id, instruction, reply_to)
+        return await service.discussion_turn(
+            discussion_id, instruction, reply_to, participant, channel, model
+        )
 
     @app.tool(
         annotations=ToolAnnotations(
@@ -119,15 +133,18 @@ def create_server(settings=None):
         max_turns_per_model: int = 2,
         roles: dict[str, str] | None = None,
         project: dict[str, str] | None = None,
+        participants: list[str] | None = None,
+        routes: dict[str, dict[str, str]] | None = None,
     ) -> dict:
-        """Create a task with independent initial judgments and 1..8 AGY budgets each. Prefer project for new projects: client first READS relevant files/docs, supplies stage/materials (source + observed contents)/success_criteria/constraints/unknowns, total <=3000 UTF-16 units. Collect three project understandings, reveal, then select roles with agy_council_assign_roles. Do not also preassign roles. Without project, legacy roles map remains supported. No model call or arbitrary project file reading."""
-        return service.council.create(
+        """Create a task with 2..4 selected participants including client gpt; defaults remain gpt/gemini/claude. Optional codex is an independent Codex CLI participant. routes maps each remote participant to {channel, model}; Claude requires Opus. Snapshots prevent implicit route/model changes. Each remote has 1..8 attempts. Prefer project for new projects: client first READS relevant files/docs, supplies stage/materials (source + observed contents)/success_criteria/constraints/unknowns, total <=3000 UTF-16 units. Collect all selected project understandings, reveal, then select roles with agy_council_assign_roles. Do not also preassign roles. Without project, legacy roles map remains supported. No model call or arbitrary project file reading."""
+        return service.create_council(
             goal,
             facts,
-            {"gemini": service.settings.model, "claude": service.settings.claude_model},
             max_turns_per_model,
             roles=roles,
             project=project,
+            participants=participants,
+            routes=routes,
         )
 
     @app.tool(
@@ -142,11 +159,17 @@ def create_server(settings=None):
         expected_role_version: int,
         project_updates: dict[str, str] | None = None,
     ) -> dict:
-        """After project understanding/reveal, choose the THREE roles this stage needs, then assign to gpt/gemini/claude. Each spec needs role (<=80), focus/output (<=200 each), reason (<=300 UTF-16 units). Initial sources must include all three initial understandings. Explain choice/tradeoffs in rationale, preserve unresolved differences. No peer endorsement is inferred. Revision needs current expected_role_version, sources and rationale; may update project brief fields. Appends history and generates role prompts, never rewrites old contributions or budgets. Client applies GPT prompt; no new GPT call, model call or automatic turn."""
+        """After project understanding/reveal, choose complementary roles for this task's selected participants (gpt is client, codex is external), then assign them. Each spec needs role (<=80), focus/output (<=200 each), reason (<=300 UTF-16 units). Initial sources must include all selected initial understandings. Explain choice/tradeoffs in rationale, preserve unresolved differences. No peer endorsement is inferred. Revision needs current expected_role_version, sources and rationale; may update project brief fields. Appends history and generates role prompts, never rewrites old contributions or budgets. Client applies GPT prompt; no new GPT call, model call or automatic turn."""
         from .project import ProjectWorkflow
 
         return ProjectWorkflow(service.council).assign(
-            discussion_id, assignments, stage, rationale, references, expected_role_version, project_updates
+            discussion_id,
+            assignments,
+            stage,
+            rationale,
+            references,
+            expected_role_version,
+            project_updates,
         )
 
     @app.tool(
@@ -187,7 +210,7 @@ def create_server(settings=None):
         focus: str = "",
         reply_to: int | None = None,
     ) -> dict:
-        """Explicitly call Gemini and/or Claude once each via AGY (default both concurrently). Separate attempt budgets; no retries/loop. Collect uses only original material, disallows leading focus, and keeps replies sealed. Later batch shares a pre-call snapshot. May incur cost; CLI tools are not forcibly disabled."""
+        """Explicitly call up to two selected remote participants via their stored channels (default first two task remotes). No call is made for client gpt. Codex CLI may be selected independently. Separate attempt budgets; no retries/loop. Collect uses only original material, disallows leading focus, and keeps replies sealed. Later batch shares a pre-call snapshot. May incur cost; CLI tools are not forcibly disabled."""
         return await service.council_round(discussion_id, participants, focus, reply_to)
 
     @app.tool(
@@ -204,13 +227,35 @@ def create_server(settings=None):
     )
     def agy_info() -> dict:
         """Report non-secret configuration, version, and execution gate; does not inspect CLI authentication."""
+        participants = {}
+        for peer in ("gemini", "claude", "codex"):
+            try:
+                endpoint = service.settings.endpoint(peer)
+                executable = shutil.which(service.settings.channel_executable(endpoint.channel))
+                participants[peer] = dict(
+                    **endpoint.public(),
+                    cli_available=bool(executable)
+                    and not (os.name == "posix" and executable.lower().endswith(".exe")),
+                )
+            except ValueError as error:
+                participants[peer] = dict(configuration_error=str(error))
         return dict(
+            participants=participants,
+            channels={
+                channel: dict(
+                    cli_available=bool(shutil.which(service.settings.channel_executable(channel))),
+                    authentication_checked=False,
+                )
+                for channel in ("antigravity", "claude_code", "codex_cli")
+            },
+            client_source="gpt",
+            authentication_checked=False,
             version=__version__,
             execution_enabled=service.settings.enabled,
             model_requested=service.settings.model,
             council_models={
-                "gemini": service.settings.model,
-                "claude": service.settings.claude_model,
+                "gemini": participants["gemini"].get("model", service.settings.model),
+                "claude": participants["claude"].get("model", service.settings.claude_model),
             },
             max_concurrent_council_models=2,
             monitor_url=service.monitor.url,

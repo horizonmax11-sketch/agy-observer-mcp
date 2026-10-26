@@ -3,15 +3,17 @@
 import asyncio
 import math
 import json
+import os
 import shutil
 from pathlib import Path
 
 from .config import Settings
+from .channels import Endpoint, stream_parser
 from .discussions import Discussions
 from .council import Council, public, RESPONSE_SCHEMA
 from .history import History
 from .monitor import Monitor
-from .runtime import RunRecord, capture
+from .runtime import CaptureError, RunRecord, capture
 
 
 def validate_result(payload):
@@ -56,9 +58,76 @@ class Service:
         self.monitor = Monitor(settings.state_dir, settings.port)
         self.active = {}
         self.active_models = {}
+        self.active_routes = {}
         self.batch_task = None
         self._batch_token = None
         self.closing = False
+
+    def endpoint(self, participant="gemini", channel=None, model=None):
+        endpoint = self.settings.endpoint(participant, channel, model)
+        executable = shutil.which(self.settings.channel_executable(endpoint.channel))
+        names = {
+            "antigravity": {"agy", "agy.exe"},
+            "claude_code": {"claude", "claude.exe"},
+            "codex_cli": {"codex", "codex.exe"},
+        }
+        if not executable:
+            raise ValueError(
+                f"{endpoint.channel} CLI is missing; install/login that CLI in the MCP environment. No channel fallback."
+            )
+        if Path(executable).name.lower() not in names[endpoint.channel]:
+            raise ValueError(
+                f"Configure the native {endpoint.channel} executable directly (no shell/.cmd wrapper)"
+            )
+        if os.name == "posix" and str(executable).lower().endswith(".exe"):
+            raise ValueError(
+                "Cross-OS CLI forwarding is unsupported; install this CLI in the MCP's Linux/WSL environment for bounded cancellation"
+            )
+        return endpoint, executable
+
+    def create_council(
+        self,
+        goal,
+        facts="",
+        max_turns_per_model=2,
+        roles=None,
+        project=None,
+        participants=None,
+        routes=None,
+    ):
+        peers = participants if participants is not None else ["gpt", "gemini", "claude"]
+        if (
+            not isinstance(peers, list)
+            or len(set(peers)) != len(peers)
+            or not 2 <= len(peers) <= 4
+            or "gpt" not in peers
+        ):
+            raise ValueError("Choose 2..4 distinct participants including client gpt")
+        remote = set(peers) - {"gpt"}
+        if not remote <= {"gemini", "claude", "codex"}:
+            raise ValueError("Unknown participant")
+        if routes is not None and (not isinstance(routes, dict) or not set(routes) <= remote):
+            raise ValueError("Routes must belong to selected remote participants")
+        endpoints = {}
+        for peer in peers:
+            if peer == "gpt":
+                continue
+            spec = (routes or {}).get(peer, {})
+            if peer in (routes or {}) and (
+                not isinstance(spec, dict) or set(spec) != {"channel", "model"}
+            ):
+                raise ValueError("Each route needs channel and model")
+            endpoints[peer] = self.settings.endpoint(peer, **spec)
+        return self.council.create(
+            goal,
+            facts,
+            {p: e.model for p, e in endpoints.items()},
+            max_turns_per_model,
+            roles=roles,
+            project=project,
+            participants=peers,
+            routes={p: e.public() for p, e in endpoints.items()},
+        )
 
     async def run(
         self,
@@ -67,10 +136,11 @@ class Service:
         discussion=None,
         council=None,
         model=None,
+        participant="gemini",
+        channel=None,
         parallel=False,
         _batch_token=None,
     ):
-        model = model or self.settings.model
         if self.closing:
             raise ValueError("Server is shutting down; new calls are not accepted")
         if not self.settings.enabled:
@@ -90,59 +160,57 @@ class Service:
             raise ValueError("Configure AGY_OBSERVER_WORKSPACE as an existing directory")
         if self.active and not parallel:
             raise ValueError("Another model call is active; parallel paid calls are disabled")
-        if model in self.active_models.values() or (parallel and len(self.active) >= 2):
-            raise ValueError("Only two distinct council models may run concurrently")
-        executable = shutil.which(self.settings.executable)
-        if not executable:
-            raise ValueError(
-                "Configured CLI executable was not found; the desktop IDE is not a CLI substitute"
-            )
-        if Path(executable).name.lower() not in {"agy", "agy.exe"}:
-            raise ValueError("Configured executable must identify agy directly")
+        endpoint, executable = self.endpoint(participant, channel, model)
+        model = endpoint.model
+        route_key = (endpoint.channel, model)
+        if route_key in self.active_routes.values() or (parallel and len(self.active) >= 2):
+            raise ValueError("Only two distinct channel/model routes may run concurrently")
         record = RunRecord(self.history.root, prompt, model, "真实对话")
+        record.state.update(participant=participant, channel=endpoint.channel, source="model")
+        record.emit(
+            "route_selected",
+            participant=participant,
+            channel=endpoint.channel,
+            model_requested=model,
+        )
         self.active[record.run_id] = asyncio.current_task()
         self.active_models[record.run_id] = model
+        self.active_routes[record.run_id] = route_key
         try:
             if discussion or council:
                 identifier, message_id = discussion or council
                 record.state.update(discussion_id=identifier, discussion_message_id=message_id)
                 record.emit("discussion_linked", discussion_id=identifier, message_id=message_id)
                 (self.council if council else self.discussions).link(
-                    identifier, message_id, record.run_id, model
+                    identifier, message_id, record.run_id, model, endpoint.channel, participant
                 )
             self.monitor.start()
             if self.settings.open_browser and not council:
                 await self.monitor.open(view="discussions" if discussion or council else None)
                 record.emit("monitor_window_requested", url=self.monitor.url)
-            command = [
-                executable,
-                "--output-format",
-                "stream-json",
-                "--mode",
-                "plan",
-                "--sandbox",
-                "--print-timeout",
-                f"{self.settings.cli_timeout}s",
-                "--model",
-                model,
-                "-p",
-                prompt,
-            ]
-            if council:
-                command.extend(
-                    ["--json-schema", json.dumps(RESPONSE_SCHEMA, separators=(",", ":"))]
-                )
+            schema = RESPONSE_SCHEMA if council else None
+            if council and endpoint.channel == "codex_cli":
+                schema = record.path / "response-schema.json"
+                schema.write_text(json.dumps(RESPONSE_SCHEMA), encoding="utf-8")
+            command = endpoint.command(executable, prompt, self.settings.cli_timeout, schema)
             _, stderr, code, payload = await capture(
                 command,
                 cwd=str(self.settings.workspace),
-                env=self.settings.cli_environment(),
-                timeout=self.settings.outer_timeout,
+                env=self.settings.cli_environment(endpoint.channel),
+                timeout=(
+                    self.settings.outer_timeout
+                    if endpoint.channel == "antigravity"
+                    else self.settings.cli_timeout
+                ),
                 limit=self.settings.output_limit,
                 record=record,
                 stream=True,
+                parser=stream_parser(endpoint.channel),
             )
             if code != 0:
-                raise ValueError("CLI exited unsuccessfully; partial response rejected")
+                raise ValueError(
+                    f"{endpoint.channel} CLI exited unsuccessfully (run {record.run_id}); check that CLI login/permissions. No retry or fallback."
+                )
             if any(
                 marker in stderr.lower()
                 for marker in (
@@ -154,7 +222,18 @@ class Service:
                 )
             ):
                 raise ValueError("CLI reported a permission or authentication failure")
-            answer = validate_result(payload)
+            try:
+                answer = validate_result(payload)
+            except ValueError as error:
+                raise ValueError(
+                    f"{endpoint.channel} did not return a successful response (run {record.run_id}); check CLI login, account model access and permissions. No fallback/retry."
+                ) from error
+            if (
+                participant == "claude"
+                and record.state.get("model_reported")
+                and "opus" not in record.state["model_reported"].lower()
+            ):
+                raise ValueError("Claude reported a non-Opus model; result rejected")
             record.finish(
                 "success",
                 response=answer,
@@ -165,6 +244,10 @@ class Service:
                 run_id=record.run_id,
                 response=answer,
                 model_requested=model,
+                participant=participant,
+                channel=endpoint.channel,
+                source="model",
+                state="success",
                 conversation_id=payload.get("conversation_id"),
                 usage=payload.get("usage"),
                 monitor_url=self.monitor.url,
@@ -174,11 +257,18 @@ class Service:
                 record.finish(
                     "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
                     error=type(exc).__name__,
+                    error_message=str(exc)[:500],
                 )
+            if isinstance(exc, (CaptureError, ValueError)):
+                raise ValueError(
+                    f"{endpoint.channel} request failed (run {record.run_id}): {exc}. "
+                    "Check this CLI's login, model access, permissions and output version; no channel/model fallback or retry."
+                ) from exc
             raise
         finally:
             self.active.pop(record.run_id, None)
             self.active_models.pop(record.run_id, None)
+            self.active_routes.pop(record.run_id, None)
 
     async def council_round(self, identifier, participants=None, focus="", reply_to=None):
         if self.closing or not self.settings.enabled:
@@ -196,21 +286,38 @@ class Service:
 
     async def _council_round(self, identifier, participants, focus, reply_to):
         data = self.council.read(identifier)
-        if data["models"] != {"gemini": self.settings.model, "claude": self.settings.claude_model}:
+        chosen = participants if participants is not None else list(data["models"])[:2]
+        if (
+            not isinstance(chosen, list)
+            or not chosen
+            or len(chosen) > 2
+            or len(set(chosen)) != len(chosen)
+            or not set(chosen) <= set(data["models"])
+        ):
+            raise ValueError("Select up to two remote participants belonging to this task")
+        if "routes" not in data and data["models"] != {
+            "gemini": self.settings.model,
+            "claude": self.settings.claude_model,
+        }:
             raise ValueError(
                 "Council model configuration changed; create a task with the current configuration"
             )
+        endpoints = {}
+        for peer in chosen:
+            spec = data.get("routes", {}).get(
+                peer, dict(channel="antigravity", model=data["models"][peer])
+            )
+            endpoints[peer], _ = self.endpoint(peer, **spec)
+        if len({(e.channel, e.model) for e in endpoints.values()}) != len(chosen):
+            raise ValueError("A batch requires distinct channel/model routes")
         if self.settings.workspace is None or not self.settings.workspace.is_dir():
             raise ValueError("Configure AGY_OBSERVER_WORKSPACE as an existing directory")
-        executable = shutil.which(self.settings.executable)
-        if not executable or Path(executable).name.lower() not in {"agy", "agy.exe"}:
-            raise ValueError("Configured executable must identify agy directly")
         self.monitor.start()
         if self.settings.open_browser:
             await self.monitor.open(view="discussions", discussion_id=identifier)
         reservations = self.council.reserve(
             identifier,
-            participants if participants is not None else ["gemini", "claude"],
+            chosen,
             focus,
             reply_to,
         )
@@ -222,6 +329,8 @@ class Service:
                     prompt,
                     council=(identifier, message_id),
                     model=model,
+                    participant=participant,
+                    channel=endpoints[participant].channel,
                     parallel=True,
                     _batch_token=self._batch_token,
                 )
@@ -247,6 +356,7 @@ class Service:
                     message_id=message_id,
                     state=state,
                     error=type(error).__name__,
+                    error_message=str(error)[:500],
                     **({"run_id": result["run_id"], "recovery_available": True} if result else {}),
                 )
 
@@ -257,14 +367,29 @@ class Service:
             discussion_url=self.monitor.discussion_url(identifier),
         )
 
-    async def discussion_turn(self, discussion_id, instruction="", reply_to=None):
+    async def discussion_turn(
+        self,
+        discussion_id,
+        instruction="",
+        reply_to=None,
+        participant="gemini",
+        channel=None,
+        model=None,
+    ):
         if self.closing or not self.settings.enabled:
             raise ValueError("Model execution is disabled or server is shutting down")
         if self.active or self.batch_task is not None:
             raise ValueError("Another model call is active")
+        endpoint, _ = self.endpoint(participant, channel, model)
         message_id, prompt = self.discussions.reserve(discussion_id, instruction, reply_to)
         try:
-            result = await self.run(prompt, discussion=(discussion_id, message_id))
+            result = await self.run(
+                prompt,
+                discussion=(discussion_id, message_id),
+                participant=participant,
+                channel=endpoint.channel,
+                model=endpoint.model,
+            )
         except BaseException as error:
             state = (
                 "cancelled"
@@ -291,17 +416,44 @@ class Service:
     def discussion_recover(self, discussion_id):
         data = self.discussions.read(discussion_id)
         council = data.get("protocol") == "council-v1"
+
+        def check_provenance(status, message):
+            # Old files without channel metadata keep their legacy recovery semantics.
+            if status.get("channel") is not None or (
+                "routes" in data and message.get("source") == "model"
+            ):
+                if (
+                    status.get("discussion_id") != discussion_id
+                    or status.get("discussion_message_id") != message["id"]
+                    or status.get("model_requested") != message.get("model_requested")
+                    or status.get("channel") != message.get("channel")
+                    or status.get("participant") != message.get("participant")
+                    or status.get("source") != "model"
+                ):
+                    raise ValueError(
+                        "Linked run participant/channel/model does not match this message"
+                    )
+
         for message in data["messages"]:
             run_id = message.get("run_id")
             if run_id and message.get("state") in {"failed", "timeout", "cancelled", "interrupted"}:
                 if run_id in self.active:
                     raise ValueError("Cannot recover a call active in this server")
                 status = self.history.status(run_id)
+                check_provenance(status, message)
                 if status["state"] == "success":
                     if (
                         status.get("discussion_id") != discussion_id
                         or status.get("discussion_message_id") != message["id"]
                         or status.get("model_requested") != message.get("model_requested")
+                        or (
+                            message.get("channel") is not None
+                            and status.get("channel") != message["channel"]
+                        )
+                        or (
+                            message.get("participant") is not None
+                            and status.get("participant") != message["participant"]
+                        )
                     ):
                         raise ValueError(
                             "Successful run does not match the failed discussion message"
@@ -323,6 +475,7 @@ class Service:
                     and message.get("run_id")
                 ):
                     status = self.history.status(message["run_id"])
+                    check_provenance(status, message)
                     if status["state"] == "success":
                         data = (self.council if council else self.discussions).finish(
                             discussion_id,
@@ -337,6 +490,7 @@ class Service:
                 raise ValueError("Cannot recover a call active in this server")
             if run_id:
                 status = self.history.status(run_id)
+                check_provenance(status, message)
                 if status["state"] not in {"success", "failed", "timeout", "cancelled"}:
                     raise ValueError(
                         "Linked run is not terminal; inspect the process before recovery"

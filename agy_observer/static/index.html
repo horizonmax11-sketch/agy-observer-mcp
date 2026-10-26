@@ -14,7 +14,7 @@ nav{padding:16px;border-right:1px solid #2a3440;display:flex;flex-direction:colu
 #runs,#sessions{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-top:12px}
 select{width:100%;font:inherit;color:inherit;background:#171f29;padding:8px;border:1px solid #415b76;margin:6px 0}
 .message{border:1px solid #354557;border-left:3px solid #78b9ff;padding:16px;margin:16px 0}.message.lead{border-left-color:#74c8a1}.message pre{max-height:360px;overflow:auto;margin-top:8px}.message small{display:block;overflow-wrap:anywhere}
-.message.gpt{border-left-color:#74c8a1}.message.claude{border-left-color:#d6a1ef}.message.plan{border:2px solid #b9bb7b}
+.message.gpt{border-left-color:#74c8a1}.message.codex{border-left-color:#91bcec}.message.claude{border-left-color:#d6a1ef}.message.plan{border:2px solid #b9bb7b}
 .message>pre{font:15px/1.8 "Segoe UI","Microsoft YaHei",sans-serif;background:transparent;padding:0;min-height:0;max-height:none}.message summary{padding:8px 0;font-size:13px}
 label{display:block;padding:8px 0;color:#a6b3c3}input{accent-color:#78b9ff}
 button{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:inherit;padding:12px;margin-bottom:8px;border-radius:4px;font:inherit;cursor:pointer;white-space:pre-wrap}
@@ -100,10 +100,10 @@ async function renderDetail(){
   const row=await read('/api/status/'+encodeURIComponent(id));if(id!==selected)return;
   txt('state',states[row.state]||row.state);txt('kind',kindLabel(row));
   txt('task',row.task);txt('response',row.response||'正在等待公开回复…');
-  txt('assistant-name',modelName(row.model_requested)+' 回复');
-  txt('warning',[row.warnings,row.error,row.cleanup_error].filter(Boolean).join('\n')||'无');
+  txt('assistant-name',(row.channel==='codex_cli'?'Codex CLI':modelName(row.model_requested))+' 回复');
+  txt('warning',[row.warnings,row.error_message||row.error,row.cleanup_error].filter(Boolean).join('\n')||'无');
   el('meta').replaceChildren();
-  for(const [label,value] of [['运行',row.run_id],['请求模型',row.model_requested],['会话',row.conversation_id||'尚无'],['退出码',row.exit_code??'尚无'],['最近事件',row.last_event_utc]]){
+  for(const [label,value] of [['参与者',row.participant||'未记录'],['来源',row.source||'未记录'],['渠道',row.channel||'未记录（旧版本）'],['运行',row.run_id],['请求模型',row.model_requested],['报告模型',row.model_reported||'CLI未报告'],['会话',row.conversation_id||'尚无'],['退出码',row.exit_code??'尚无'],['最近事件',row.last_event_utc]]){
    const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;el('meta').append(dt,dd);
   }
   detailKey=key;
@@ -140,18 +140,18 @@ function fillProject(data,who){
  for(const [key,label] of [['stage','当前阶段'],['materials','材料与已知内容'],['success_criteria','成功标准'],['constraints','约束'],['unknowns','待澄清的问题']]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=profile[key];list.append(dt,dd)}root.append(details);
  if(versions.length){const history=document.createElement('details'),title=document.createElement('summary');title.textContent='分工调整记录（'+versions.length+'版）';history.append(title);
   for(const v of versions){const heading=document.createElement('h3'),reason=document.createElement('p');heading.textContent='v'+v.version+' · '+v.stage;reason.textContent=v.rationale;history.append(heading,reason);
-   for(const p of ['gpt','gemini','claude']){const spec=v.assignments[p],text=document.createElement('p');text.textContent=who(p)+' · '+spec.role+'：'+spec.focus+'；产出：'+spec.output+'；选择原因：'+spec.reason;history.append(text)}
+   for(const p of Object.keys(v.assignments)){const spec=v.assignments[p],text=document.createElement('p');text.textContent=who(p)+' · '+spec.role+'：'+spec.focus+'；产出：'+spec.output+'；选择原因：'+spec.reason;history.append(text)}
   }root.append(history);
  }
 }
 function fillDiscussion(data){
  const council=data.protocol==='council-v1',peer=data.protocol==='peer-v1';
- const recordedModels=[...new Set(data.messages.filter(m=>m.author==='reviewer'&&m.model_requested).map(m=>modelName(m.model_requested)))];
- const who=(author,model)=>council?({gpt:'GPT',gemini:'Gemini',claude:'Claude'}[author]||author):author==='lead'?'GPT':model?modelName(model):recordedModels.join(' / ')||'未记录模型';
+ const recordedModels=[...new Set(data.messages.filter(m=>m.author==='reviewer'&&m.model_requested).map(m=>m.channel==='codex_cli'?'Codex CLI':modelName(m.model_requested)))];
+ const who=(author,model)=>council?({gpt:'GPT（客户端）',gemini:'Gemini',claude:'Claude',codex:'Codex CLI'}[author]||author):author==='lead'?'GPT（客户端）':model?modelName(model):recordedModels.join(' / ')||'未记录模型';
  fillProject(data,who);
  txt('role-heading',data.project?(data.role_version?'本阶段分工 · v'+data.role_version:'项目分工（待共同选择）'):council?'项目分工'+(data.phase==='collect'?'（首轮公开后启用）':''):'参与方式');
  txt('discussion-help',isTest(data)?'离线演示：这里都是示例内容，没有调用模型。':council?'先各自想一想，再一起把方案改好。有不同看法可以直接提出，也可以补充信息或调整想法。':`${who('lead')} 与 ${who('reviewer')} 一起讨论。${peer?'可以接着聊、问问题，也可以换个角度看看。':''}`);
- txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · Gemini '+data.attempts.gemini+'/'+data.max_turns_per_model+' · Claude '+data.attempts.claude+'/'+data.max_turns_per_model:''}`);
+ txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · '+Object.entries(data.attempts).map(([p,n])=>who(p)+' '+n+'/'+data.max_turns_per_model).join(' · '):''}`);
  el('roles').replaceChildren();
  for(const [role,brief] of Object.entries(data.roles)){
   const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=who(role);dd.textContent=brief;el('roles').append(dt,dd);
@@ -172,9 +172,9 @@ function fillDiscussion(data){
  for(const row of data.messages){
   const card=document.createElement('section');card.className='message '+row.author+(row.kind==='plan'?' plan':'');card.id='message-'+row.id;
   const role=data.project&&row.role_version?data.project.role_versions[row.role_version-1]?.assignments[row.author]?.role:null;
-  const title=document.createElement('strong');title.textContent=`#${row.id} ${who(row.author,row.model_requested)}${role?' · '+role+'（v'+row.role_version+'）':''} · ${data.project&&row.kind==='initial'?'项目理解':messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
+  const title=document.createElement('strong');title.textContent=`#${row.id} ${(row.channel==='codex_cli'?'Codex CLI':who(row.author,row.model_requested))}${role?' · '+role+'（v'+row.role_version+'）':''} · ${data.project&&row.kind==='initial'?'项目理解':messageKinds[row.kind]||row.kind}${row.state?' · '+(states[row.state]||row.state):''}`;card.append(title);
   const record=document.createElement('details'),recordTitle=document.createElement('summary');recordTitle.textContent='依据与记录';record.append(recordTitle);
-  const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'选择：'+resolutions[row.resolution]:'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');if(reference.textContent)record.append(reference);
+  const reference=document.createElement('small');reference.textContent=[row.reply_to?'回应 #'+row.reply_to:'',row.resolution?'选择：'+resolutions[row.resolution]:'',row.source?'来源 '+(row.source==='client'?'客户端提交':'外部CLI'):'',row.channel?'渠道 '+row.channel:'未记录渠道（旧版本）',row.participant?'参与者 '+who(row.participant):'',row.model_requested?'请求模型 '+row.model_requested:'',row.run_id?'调用 '+row.run_id:''].filter(Boolean).join(' · ');if(reference.textContent)record.append(reference);
   if(row.instruction){const instruction=document.createElement('p');instruction.textContent='本轮话题：'+row.instruction;record.append(instruction)}
   const content=document.createElement('pre');content.id='message-content-'+row.id;content.textContent=row.content||(row.state==='running'?'等待公开回复…':row.state==='success'?'没有公开正文。':'本次调用未完成，详情见“依据与记录”。');card.append(content);
   if(row.format==='plain-text'||row.protocol_warning?.includes('message包含')){const warning=document.createElement('p');warning.className='muted';warning.textContent='这条回复仍带有格式包装，已保留原文。';card.append(warning)}

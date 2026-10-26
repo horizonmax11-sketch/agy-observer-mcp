@@ -14,4 +14,10 @@ AGY_OBSERVER_CLI = "/absolute/path/to/agy"
 AGY_OBSERVER_WORKSPACE = "/absolute/path/to/empty-workspace"
 AGY_OBSERVER_STATE_DIR = "/absolute/path/to/private-state"
 AGY_OBSERVER_MODEL = "gemini-3.8-flash-low"
-AGY_OBSERVER_CLAUDE_MODEL = "claude-sonnet-4-6"
+AGY_OBSERVER_CLAUDE_MODEL = "claude-opus-4-6-thinking"
+
+# Optional direct CLIs; keep Antigravity defaults unless explicitly selecting routes.
+AGY_OBSERVER_CLAUDE_CLI = "claude"
+AGY_OBSERVER_CODEX_CLI = "codex"
+AGY_OBSERVER_CODEX_MODEL = "gpt-6.1-sol"
+# AGY_OBSERVER_PARTICIPANTS = '{"claude":{"channel":"claude_code","model":"opus"}}'

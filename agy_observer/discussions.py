@@ -137,7 +137,7 @@ class Discussions:
             or not 0
             <= data["model_attempts"]
             <= data["max_model_turns"]
-            <= (16 if data.get("protocol") == "council-v1" else 8)
+            <= (24 if data.get("protocol") == "council-v1" else 8)
             or not isinstance(data.get("closed"), bool)
         ):
             raise ValueError("Invalid discussion document")
@@ -315,6 +315,8 @@ class Discussions:
                     id=len(data["messages"]) + 1,
                     author="lead",
                     source="client",
+                    participant="gpt",
+                    channel="client",
                     kind=kind,
                     content=content,
                     reply_to=reply_to,
@@ -438,7 +440,15 @@ class Discussions:
             raise ValueError("Discussion context exceeds the prompt limit")
         return prompt, manifest
 
-    def link(self, discussion_id, message_id, run_id, model_requested=None):
+    def link(
+        self,
+        discussion_id,
+        message_id,
+        run_id,
+        model_requested=None,
+        channel=None,
+        participant=None,
+    ):
         with self.writing():
             data = self.read(discussion_id)
             message = data["messages"][message_id - 1]
@@ -446,6 +456,8 @@ class Discussions:
                 raise ValueError("Review attempt is not running")
             message["run_id"] = run_id
             message["model_requested"] = model_requested
+            if channel is not None:
+                message.update(channel=channel, participant=participant)
             data["updated_utc"] = utc()
             self.save(data)
 

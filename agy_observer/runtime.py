@@ -86,6 +86,7 @@ class RunRecord:
         self.emit("terminal", state=state, exit_code=self.state["exit_code"])
         (self.path / "transcript.md").write_text(
             f"# {self.run_id}\n\n类别：{self.state['kind']}\n\n请求模型：{self.state['model_requested']}\n\n"
+            f"参与者：{self.state.get('participant', '未记录')}；渠道：{self.state.get('channel', '未记录（旧版本）')}\n\n"
             f"会话：{self.state['conversation_id']}\n\n终态：{state}；退出码：{self.state['exit_code']}\n\n"
             f"## 任务\n\n{self.state['task']}\n\n## 回复\n\n{self.state['response']}\n\n"
             f"## 警告\n\n{self.state['warnings']}\n",
@@ -127,7 +128,7 @@ async def stop_group(process):
 
 
 async def capture(
-    command, *, cwd, env, timeout=40, limit=2 * 1024 * 1024, record=None, stream=False
+    command, *, cwd, env, timeout=40, limit=2 * 1024 * 1024, record=None, stream=False, parser=None
 ):
     """Drain both pipes concurrently; cap each during reading; bound the entire pipe lifetime."""
     options = {"start_new_session": True} if os.name == "posix" else {"creationflags": 0x08000000}
@@ -149,11 +150,12 @@ async def capture(
             )
         raise
     totals = {"stdout": 0, "stderr": 0}
-    result_payloads = []
-    stream_started = False
+    if stream and parser is None:
+        from .channels import AntigravityStream
+
+        parser = AntigravityStream()
 
     async def drain(pipe, name):
-        nonlocal stream_started
         chunks, pending = [], ""
         decoder = codecs.getincrementaldecoder("utf-8")(
             "strict" if stream and name == "stdout" else "replace"
@@ -178,45 +180,17 @@ async def capture(
                         event = strict_json(line)
                         if not isinstance(event, dict):
                             raise CaptureError("stream event must be an object")
-                        label = event.get("event")
-                        if label not in {"init", "step_update", "result"}:
-                            raise CaptureError("unrecognized stream event")
-                        if result_payloads:
-                            raise CaptureError("event after terminal result")
-                        if label == "init":
-                            if stream_started:
-                                raise CaptureError("duplicate init event")
-                            stream_started = True
-                        elif not stream_started:
-                            raise CaptureError("stream event before init")
-                        if label == "step_update" and not isinstance(
-                            event.get("step_update"), dict
-                        ):
-                            raise CaptureError("invalid stream step")
-                        if label == "init" and not isinstance(event.get("init", {}), dict):
-                            raise CaptureError("invalid stream init")
-                        if label == "result":
-                            result_payloads.append(event.get("result"))
-                        if record:
-                            # Never persist private thinking or arbitrary tool parameter payloads.
-                            step = event.get("step_update", {})
-                            public = {
-                                k: step[k]
-                                for k in ("step_index", "state", "step_type", "tool_name")
-                                if k in step
-                            }
-                            if step.get("step_type") == "agent_response":
-                                delta = step.get("text_delta", "")
-                                if isinstance(delta, str):
-                                    public["text_delta"] = delta
-                                    record.state["response"] += delta
-                            if label == "init":
-                                record.state["conversation_id"] = event.get("conversation_id")
-                                public = {
-                                    k: event.get("init", {}).get(k)
-                                    for k in ("model", "permission_mode")
-                                }
-                            record.emit("cli_" + str(label), **public)
+                        try:
+                            label, public = parser.feed(event)
+                        except (ValueError, TypeError, AttributeError) as error:
+                            raise CaptureError(str(error)) from error
+                        if record and label != "metadata":
+                            record.state["response"] = parser.text
+                            if parser.conversation_id:
+                                record.state["conversation_id"] = parser.conversation_id
+                            if parser.reported_model:
+                                record.state["model_reported"] = parser.reported_model
+                            record.emit("cli_" + label, **public)
         tail = decoder.decode(b"", final=True)
         if record and name == "stderr" and tail:
             record.state["warnings"] += tail
@@ -245,12 +219,16 @@ async def capture(
             record.state["state"] = "running"
             record.emit("spawn", pid=process.pid)
         stdout, stderr, code = await asyncio.wait_for(joined, timeout)
-        if stream and len(result_payloads) != 1:
-            raise CaptureError("stream must contain exactly one terminal result")
+        payload = None
+        if stream:
+            try:
+                payload = parser.finish()
+            except ValueError as error:
+                raise CaptureError(str(error)) from error
         if record:
             record.state["exit_code"] = code
             record.emit("process_exit", exit_code=code, bytes_received=totals)
-        return stdout, stderr, code, result_payloads[0] if stream else None
+        return stdout, stderr, code, payload
     except BaseException as exc:
         for task in tasks:
             task.cancel()

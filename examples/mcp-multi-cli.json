@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "agy-observer": {
+      "command": "/absolute/path/to/.venv/bin/python",
+      "args": [
+        "-m",
+        "agy_observer.server"
+      ],
+      "env": {
+        "AGY_OBSERVER_ENABLED": "0",
+        "AGY_OBSERVER_CLI": "/absolute/path/to/agy",
+        "AGY_OBSERVER_WORKSPACE": "/absolute/path/to/empty-workspace",
+        "AGY_OBSERVER_STATE_DIR": "/absolute/path/to/private-state",
+        "AGY_OBSERVER_MODEL": "gemini-3.8-flash-low",
+        "AGY_OBSERVER_CLAUDE_MODEL": "claude-opus-4-6-thinking",
+        "AGY_OBSERVER_CLAUDE_CLI": "claude",
+        "AGY_OBSERVER_CODEX_CLI": "codex",
+        "AGY_OBSERVER_CODEX_MODEL": "gpt-6.1-sol",
+        "AGY_OBSERVER_PARTICIPANTS": "{\"claude\":{\"channel\":\"claude_code\",\"model\":\"opus\"},\"codex\":{\"channel\":\"codex_cli\",\"model\":\"gpt-6.1-sol\"}}"
+      }
+    }
+  }
+}

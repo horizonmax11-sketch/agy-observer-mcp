@@ -13,6 +13,10 @@ SUMMARY_KEYS = (
     "kind",
     "state",
     "model_requested",
+    "participant",
+    "channel",
+    "source",
+    "model_reported",
     "started_utc",
     "finished_utc",
     "last_event_utc",
@@ -48,9 +52,11 @@ class History:
     def status(self, run_id):
         path = self.file(run_id, "status.json")
         wait_for_write(path.with_name("status.tmp"))
+
         def bounded_read():
             with path.open("rb") as file:
                 return file.read(MAX_STATUS_BYTES + 1)
+
         data = retry_permission(bounded_read)
         if len(data) > MAX_STATUS_BYTES:
             raise ValueError("History status exceeds the read limit")

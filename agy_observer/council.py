@@ -1,4 +1,4 @@
-"""Three participants, isolated initial contexts and one explicitly revised shared plan.
+"""Selected participants, isolated initial contexts and one revised shared plan.
 
 The client contributes as GPT; Gemini/Claude are distinct configured AGY models.
 Sealing prevents accidental disclosure through discussion APIs, not access by the
@@ -14,6 +14,7 @@ import uuid
 from .discussions import DIALOGUE_STYLE, checked, clipped, peer_envelope, units
 from .runtime import utc
 from . import project as projects
+from .channels import Endpoint, LABELS
 
 PEERS = {"gpt", "gemini", "claude"}
 REMOTE = {"gemini", "claude"}
@@ -48,10 +49,18 @@ RESPONSE_SCHEMA = {
 }
 
 
-def project_roles(roles):
-    if not isinstance(roles, dict) or set(roles) != PEERS:
+def peers(data):
+    return set(data.get("participants", PEERS))
+
+
+def remote(data):
+    return peers(data) - {"gpt"}
+
+
+def project_roles(roles, participants=PEERS):
+    if not isinstance(roles, dict) or set(roles) != set(participants):
         raise ValueError("roles must contain gpt, gemini and claude")
-    return {p: checked(roles[p], 600, "role") for p in sorted(PEERS)}
+    return {p: checked(roles[p], 600, "role") for p in sorted(participants)}
 
 
 def council_envelope(content):
@@ -82,35 +91,70 @@ def validate(data):
     """Validate persisted council records before either API or prompt construction."""
     if not all(isinstance(data.get(key), dict) for key in ("roles", "models", "attempts")):
         raise ValueError("Invalid council metadata")
-    project_roles(data["roles"])
+    participants = peers(data)
+    remotes = remote(data)
     if (
-        set(data.get("roles", {})) != PEERS
-        or set(data.get("models", {})) != REMOTE
+        not 2 <= len(participants) <= 4
+        or "gpt" not in participants
+        or not remotes <= {"gemini", "claude", "codex"}
+    ):
+        raise ValueError("Invalid council roster")
+    if "participants" in data and (
+        not isinstance(data["participants"], list) or len(data["participants"]) != len(participants)
+    ):
+        raise ValueError("Duplicate/invalid participants")
+    if "routes" in data:
+        if not isinstance(data["routes"], dict) or set(data["routes"]) != remotes:
+            raise ValueError("Invalid route snapshot")
+        for participant, spec in data["routes"].items():
+            if (
+                not isinstance(spec, dict)
+                or set(spec) != {"channel", "model"}
+                or spec["model"] != data["models"][participant]
+            ):
+                raise ValueError("Invalid route snapshot")
+            Endpoint(participant, **spec)
+    project_roles(data["roles"], participants)
+    if (
+        set(data.get("roles", {})) != participants
+        or set(data.get("models", {})) != remotes
         or data.get("phase") not in {"collect", "discuss"}
         or type(data.get("plan_version")) is not int
         or data["plan_version"] < 0
         or type(data.get("max_turns_per_model")) is not int
         or not 1 <= data["max_turns_per_model"] <= 8
         or not isinstance(data.get("attempts"), dict)
-        or set(data["attempts"]) != REMOTE
+        or set(data["attempts"]) != remotes
         or any(
             type(n) is not int or not 0 <= n <= data["max_turns_per_model"]
             for n in data["attempts"].values()
         )
         or data.get("model_attempts") != sum(data["attempts"].values())
-        or data.get("max_model_turns") != 2 * data["max_turns_per_model"]
+        or data.get("max_model_turns") != len(remotes) * data["max_turns_per_model"]
     ):
         raise ValueError("Invalid council document")
     for i, m in enumerate(data["messages"], 1):
         if (
             not isinstance(m, dict)
             or m.get("id") != i
-            or m.get("author") not in PEERS
+            or m.get("author") not in participants
             or not isinstance(m.get("content"), str)
             or m.get("state") not in TERMINAL | {"running"}
             or m.get("kind") not in KINDS | {"initial", "plan", "summary", "contribution", "roles"}
         ):
             raise ValueError("Invalid council message")
+        if m.get("source") != ("client" if m["author"] == "gpt" else "model"):
+            raise ValueError("Client notes cannot impersonate external CLI messages")
+        if m.get("participant") is not None and m["participant"] != m["author"]:
+            raise ValueError("Message participant does not match its author")
+        if m.get("channel") is not None:
+            expected = (
+                "client"
+                if m["author"] == "gpt"
+                else data.get("routes", {}).get(m["author"], {}).get("channel", "antigravity")
+            )
+            if m["channel"] != expected:
+                raise ValueError("Message channel differs from its participant route")
         refs(data, m.get("references", []), before=i)
         answers(data, m["author"], m.get("answers_to", []), before=i)
         if m.get("question") is not None:
@@ -154,7 +198,7 @@ def public(data):
             ),
             "missing",
         )
-        for p in sorted(PEERS)
+        for p in sorted(peers(result))
     }
     result["reveal_ready"] = (
         not result["closed"]
@@ -211,12 +255,22 @@ class Council:
         kind="三方协作",
         roles=None,
         project=None,
+        participants=None,
+        routes=None,
     ):
         goal = checked(goal, 2000, "goal")
         facts = checked(facts, 3000, "facts") if facts else "未提供额外材料。"
         if type(max_turns_per_model) is not int or not 1 <= max_turns_per_model <= 8:
             raise ValueError("Per-model budget must be between 1 and 8")
-        if set(models) != REMOTE or len(set(models.values())) != 2:
+        selected = set(participants) if participants is not None else PEERS
+        remotes = selected - {"gpt"}
+        if (
+            "gpt" not in selected
+            or not 2 <= len(selected) <= 4
+            or not remotes <= {"gemini", "claude", "codex"}
+        ):
+            raise ValueError("Choose a client GPT plus 1..3 distinct remote participants")
+        if set(models) != remotes or (routes is None and len(set(models.values())) != len(remotes)):
             raise ValueError("Configure two distinct Gemini and Claude model identifiers")
         if project is not None and roles is not None:
             raise ValueError("Project understanding must precede roles; omit preassigned roles")
@@ -231,28 +285,35 @@ class Council:
             phase="collect",
             closed=False,
             roles=(
-                project_roles(roles)
+                project_roles(roles, selected)
                 if roles is not None
                 else {
                     p: "可开题、补证、质疑、修正和提出替代路径；关注角度按问题轮换，无固定裁决权。"
-                    for p in sorted(PEERS)
+                    for p in sorted(selected)
                 }
             ),
             max_turns_per_model=max_turns_per_model,
-            attempts={p: 0 for p in sorted(REMOTE)},
+            attempts={p: 0 for p in models},
             model_attempts=0,
-            max_model_turns=2 * max_turns_per_model,
+            max_model_turns=len(remotes) * max_turns_per_model,
             plan_version=0,
             messages=[],
             created_utc=utc(),
             updated_utc=utc(),
         )
+        if participants is not None:
+            data["participants"] = list(participants)
+        if routes is not None:
+            data["routes"] = deepcopy(routes)
+        if selected != PEERS:
+            data["kind"] = "多方协作"
         if profile is not None:
             data["project"] = dict(brief=profile, role_versions=[])
             data["roles"] = {
-                p: "尚未分工；先共同理解项目，再选择当前需要的三个角色。" for p in sorted(PEERS)
+                p: "尚未分工；先共同理解项目，再选择当前需要的互补角色。" for p in sorted(selected)
             }
         with self.store.writing():
+            validate(data)
             self.store.save(data)
         return public(data)
 
@@ -316,6 +377,8 @@ class Council:
                 id=len(data["messages"]) + 1,
                 author="gpt",
                 source="client",
+                participant="gpt",
+                channel="client",
                 kind=kind,
                 state="success",
                 content=content,
@@ -349,7 +412,7 @@ class Council:
                 for m in data["messages"]
                 if m["kind"] == "initial" and m["state"] == "success"
             }
-            if completed != PEERS:
+            if completed != peers(data):
                 raise ValueError(
                     "All three successful initial judgments are required before reveal"
                 )
@@ -376,7 +439,7 @@ class Council:
             if project:
                 instruction = (
                     "先理解项目的目标、当前阶段、成功标准、约束和材料缺口。指出最重要的一处遗漏或歧义并追问，"
-                    "可简短建议三种互补角色及理由，但先不分配给模型、不写完整方案。"
+                    "可简短建议互补角色及理由，但先不分配给模型、不写完整方案。"
                     "项目材料由客户端提供，未读到的代码或文档不要说已经检查。"
                 )
         else:
@@ -397,7 +460,7 @@ class Council:
             questions = sorted(questions, key=lambda q: q["message_id"] != reply_to)[:3]
             chosen.update(q["message_id"] for q in questions)
             # Match the user's visible model names; initial contexts remain isolated.
-            aliases = {"gpt": "GPT", "gemini": "Gemini", "claude": "Claude"}
+            aliases = LABELS
             material["self"] = aliases[participant]
             material["messages"] = []
             truncated = []
@@ -406,7 +469,17 @@ class Council:
                     continue
                 row = {
                     k: m.get(k)
-                    for k in ("id", "kind", "state", "references", "answers_to", "plan_version")
+                    for k in (
+                        "id",
+                        "kind",
+                        "state",
+                        "references",
+                        "answers_to",
+                        "plan_version",
+                        "channel",
+                        "model_requested",
+                        "run_id",
+                    )
                 }
                 row["author"] = aliases[m["author"]]
                 for key in ("content", "question", "evidence", "change_reason"):
@@ -469,12 +542,14 @@ class Council:
             or not participants
             or len(participants) > 2
             or len(set(participants)) != len(participants)
-            or any(p not in REMOTE for p in participants)
+            or any(p not in {"gemini", "claude", "codex"} for p in participants)
         ):
             raise ValueError("Choose distinct Gemini and/or Claude participants")
         focus = checked(focus, 1200, "focus") if focus else ""
         with self.store.writing():
             data = self.read(identifier)
+            if not set(participants) <= remote(data):
+                raise ValueError("Participant does not belong to this task")
             self.writable(data, len(participants))
             self.store.reference(data, reply_to)
             if data["phase"] == "collect" and (focus or reply_to is not None):
@@ -495,6 +570,8 @@ class Council:
                     id=len(data["messages"]) + 1,
                     author=p,
                     source="model",
+                    participant=p,
+                    channel=data.get("routes", {}).get(p, {}).get("channel", "antigravity"),
                     state="running",
                     content="",
                     kind="initial" if data["phase"] == "collect" else "contribution",
@@ -515,14 +592,16 @@ class Council:
             self.store.save(data)
             return result
 
-    def link(self, identifier, message_id, run_id, model):
+    def link(self, identifier, message_id, run_id, model, channel=None, participant=None):
         with self.store.writing():
             data = self.read(identifier)
             m = data["messages"][message_id - 1]
             if (
                 m["state"] != "running"
-                or m["author"] not in REMOTE
+                or m["author"] not in remote(data)
                 or data["models"][m["author"]] != model
+                or (participant is not None and participant != m["author"])
+                or (channel is not None and channel != m.get("channel", "antigravity"))
             ):
                 raise ValueError("Model does not match the pending participant")
             m.update(run_id=run_id, model_requested=model)
@@ -551,7 +630,7 @@ class Council:
                     state != "success"
                     or m["state"] not in {"failed", "timeout", "cancelled", "interrupted"}
                     or m.get("run_id") != recovered_run_id
-                    or m["author"] not in REMOTE
+                    or m["author"] not in remote(data)
                 ):
                     raise ValueError("Recovery requires a linked failed model message")
                 m["recovery"] = dict(

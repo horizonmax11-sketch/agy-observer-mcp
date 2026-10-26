@@ -1,11 +1,13 @@
 # 配置参考
 
+0.8.0新增直接Claude Code与Codex CLI。渠道、参与者、请求模型及新的环境变量见[多渠道接入](channels.md)。省略新参数时仍使用Antigravity；Claude新请求仅允许Opus，旧Sonnet历史不改写。
+
 | 变量 | 默认值/含义 |
 | --- | --- |
 | `AGY_OBSERVER_ENABLED` | `0`；只有精确的`1`启用执行 |
 | `AGY_OBSERVER_CLI` | `agy`，也可以是CLI绝对路径 |
 | `AGY_OBSERVER_MODEL` | `gemini-3.8-flash-low` |
-| `AGY_OBSERVER_CLAUDE_MODEL` | `claude-sonnet-4-6`；三方协作中的另一独立请求模型 |
+| `AGY_OBSERVER_CLAUDE_MODEL` | `claude-opus-4-6-thinking`；三方协作中的另一独立请求模型 |
 | `AGY_OBSERVER_WORKSPACE` | 无默认；执行时必须指向现有目录，建议空目录 |
 | `AGY_OBSERVER_STATE_DIR` | Linux/macOS按XDG state路径；Windows按LOCALAPPDATA |
 | `AGY_OBSERVER_PORT` | `0`，由操作系统选择空闲loopback端口 |

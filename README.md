@@ -1,12 +1,25 @@
 # AGY Observer MCP
 
-**在 MCP 客户端里接入 Gemini、Claude，让模型一起讨论项目，并在本地窗口看清每次调用和方案的演变。**
+**在 MCP 客户端里接入 Gemini、Claude 和独立 Codex CLI，让模型一起讨论项目，并在本地窗口看清每次调用和方案的演变。**
 
-AGY Observer MCP 通过已登录的 Antigravity CLI 发起模型请求。你可以只问一个问题，也可以让当前客户端中的 GPT 与 Gemini、Claude 共同理解项目、选择分工、追问和修改一份方案。提问、回答、讨论依据和方案版本留在本机，方便回看和继续推进。
+AGY Observer MCP 支持 Antigravity、官方 Claude Code 和 Codex CLI 三个调用渠道，使用各 CLI 自己的登录。你可以只问一个问题，也可以让当前客户端中的 GPT 与 Gemini、Claude 共同理解项目、选择分工、追问和修改一份方案。提问、回答、讨论依据和方案版本留在本机，方便回看和继续推进。
 
-**当前正式版：0.7.1** · [版本记录](CHANGELOG.md) · Apache-2.0
+**当前版本：0.8.0** · [版本记录](CHANGELOG.md) · Apache-2.0
 
-[功能与场景](#功能与场景) · [工作方式](#工作方式) · [安装与演示](#安装与演示) · [连接 MCP](#连接-mcp) · [第一次使用](#第一次使用) · [三方协作](#三方协作怎样开展) · [常见问题](#常见问题) · [文档导航](#文档导航)
+[调用渠道](#调用渠道) · [功能与场景](#功能与场景) · [工作方式](#工作方式) · [安装与演示](#安装与演示) · [连接 MCP](#连接-mcp) · [第一次使用](#第一次使用) · [三方协作](#三方协作怎样开展) · [常见问题](#常见问题) · [文档导航](#文档导航)
+
+## 调用渠道
+
+| 参与者 | 渠道 | 请求模型与来源 |
+| --- | --- | --- |
+| GPT（客户端） | 当前 MCP 客户端 | 客户端提交自己的发言，不伪装成 CLI 返回 |
+| Gemini | Antigravity | 保留原有 agy 调用 |
+| Claude | Antigravity 或官方 Claude Code | 显式选择渠道与该账号可用的 Opus；无 Sonnet 回退 |
+| Codex CLI | 独立 Codex CLI | 单独配置请求模型，独立运行编号，与客户端 GPT 分开显示 |
+
+参与者、渠道、模型分开配置。默认问答与三方任务仍沿用 Antigravity；可以只邀请需要的参与者，也可以创建包含独立 Codex 的2–4人任务。所有渠道共用项目理解、动态角色提示词、共同草案版本、窗口和历史。
+
+安装各 CLI、选择路由、单次调用、多方讨论及安全默认值见[多渠道接入指南](docs/channels.md)。CLI 与 MCP 应在同一系统环境中运行；缺少某个 CLI、登录或模型权限会明确失败，不擅自切换或重试。0.8.0 的验证以离线模拟和真实 MCP 握手为主，未新增付费推理请求。
 
 ## 功能与场景
 
@@ -36,7 +49,9 @@ AGY Observer MCP 通过已登录的 Antigravity CLI 发起模型请求。你可�
 你在 MCP 客户端提出问题或推进项目
                   │
           AGY Observer MCP
-            ├─ Antigravity CLI ─ Gemini / Claude
+            ├─ Antigravity CLI ─ Gemini / Claude Opus
+            ├─ Claude Code CLI ─ Claude Opus
+            ├─ Codex CLI ─ 独立 Codex 参与者
             └─ 本地记录与只读窗口
 
 GPT 的发言来自当前 MCP 客户端，客户端组织每一轮交流。
@@ -45,13 +60,13 @@ GPT 的发言来自当前 MCP 客户端，客户端组织每一轮交流。
 | 组成 | 负责什么 |
 | --- | --- |
 | MCP 客户端中的 GPT | 阅读项目材料，提交自己的看法，组织话轮，汇集共同草案并执行获授权的项目工作 |
-| Gemini 与 Claude | 通过各自配置的 Antigravity 模型请求参与理解、提问、补充和修正 |
+| Gemini、Claude 与独立 Codex | 通过所选 CLI 渠道参与理解、提问、补充和修正；每场任务按需要选择 |
 | MCP 服务 | 调用 CLI，记录状态与问答，管理尝试预算、分工和方案版本 |
 | 本地网页 | 展示调用和讨论；提问、继续讨论及修改操作从 MCP 客户端发起 |
 
 GPT 由客户端参与，本服务不另行调用 GPT API。Gemini 与 Claude 可以在同一个显式批次中并发请求，各有自己的本地尝试次数；服务商的实际额度与权限仍由各自账号决定。
 
-项目采用 Python、MCP SDK 和标准库实现，无需构建前端。发起真实调用需要 **Python 3.10+**，以及已安装、已登录的官方 **`agy` CLI**。仅安装 Antigravity 桌面 IDE 不能替代 CLI。
+项目采用 Python、MCP SDK 和标准库实现，无需构建前端。发起真实调用需要 **Python 3.10+**，以及已安装、已登录的官方 **所选渠道的 CLI**。默认 Antigravity 需官方 `agy` CLI，桌面 IDE 不能替代它；直接通道的安装见[多渠道接入](docs/channels.md)。
 
 ## 安装与演示
 
@@ -73,10 +88,10 @@ python3 -m venv .venv
 .venv/bin/python -m pip install .
 ```
 
-也可以从本仓库 **Releases → v0.7.1 → Assets** 下载 wheel，在下载目录中把上面的安装命令替换为：
+也可以从本仓库 **Releases → v0.8.0 → Assets** 下载 wheel，在下载目录中把上面的安装命令替换为：
 
 ```sh
-python -m pip install ./agy_observer_mcp-0.7.1-py3-none-any.whl
+python -m pip install ./agy_observer_mcp-0.8.0-py3-none-any.whl
 ```
 
 此处 `python` 应替换为刚创建的虚拟环境 Python 路径。发布附件同时提供 `SHA256SUMS`，可核对下载文件。当前文档以 Windows/Linux 为已验证环境，macOS 尚未完成验证。
@@ -142,7 +157,7 @@ python -m agy_observer.demo --council --state-dir ./state --port 8766 --open
 | 环境变量 | 用途 | 配置建议 |
 | --- | --- | --- |
 | `AGY_OBSERVER_MODEL` | 单次调用及三方任务的 Gemini 请求模型 | 默认 `gemini-3.8-flash-low`，以 `agy models` 的实际结果为准 |
-| `AGY_OBSERVER_CLAUDE_MODEL` | 三方任务的 Claude 请求模型 | 默认 `claude-sonnet-4-6`；希望使用 Opus 时，显式填写账号可用的 Opus 标识 |
+| `AGY_OBSERVER_CLAUDE_MODEL` | 三方任务的 Claude 请求模型 | 默认 `claude-opus-4-6-thinking`；官方 Claude Code 使用该账号可用的 Opus 标识，如 `opus` |
 | `AGY_OBSERVER_CLI_TIMEOUT` | 单次 CLI 请求的等待上限 | 默认 30 秒；慢模型可设 120 秒，最高 180 秒 |
 | `AGY_OBSERVER_OUTER_TIMEOUT` | 外层捕获的等待上限 | 默认 `max(40, CLI超时+10)` 秒；慢模型可设 150 秒，最高 210 秒 |
 | `AGY_OBSERVER_OPEN_BROWSER` | 是否请求自动打开本地窗口 | 默认 `1`；无桌面环境可显式设为 `0` |
@@ -175,13 +190,15 @@ python -m agy_observer.demo --council --state-dir ./state --port 8766 --open
 
 ## 三方协作怎样开展
 
+默认仍为客户端 GPT、Gemini、Claude。也可按[多渠道指南](docs/channels.md)选择包含独立 Codex 的2–4位参与者；只调用当前任务需要的渠道。
+
 ### 先理解项目，再决定分工
 
 一个新项目可能需要需求、实现和测试三个角度；另一个项目可能更需要交互、兼容性和发布维护。角色来自项目当前的缺口，GPT、Gemini、Claude 都可以跨角色补充或质疑。
 
 1. **整理材料**：客户端读取相关文档和代码，填写阶段、材料来源与内容、成功标准、约束和未知项。MCP 不会自行扫描整个仓库。
 2. **分别初判**：三方先针对相同原始材料提出简短理解和遗漏。Gemini、Claude 首轮看不到其他人的发言；GPT 的上下文由客户端如实标记。
-3. **一起公开并选角**：收齐三份成功初判后公开，再选择三个互补角色，说明职责、预期产出和选择原因，生成各自提示词。
+3. **一起公开并选角**：收齐所选参与者的成功初判后公开，再选择对应数量的互补角色，说明职责、预期产出和选择原因，生成各自提示词。
 4. **共同推进一份草案**：参与者围绕具体问题补证、提问、举反例或修正。客户端汇集带版本的方案，后续修改保留原版本与原因。
 5. **按阶段调整或结束**：主要问题变化时更新分工；信息不足、预算用完或没有新内容时，记录阶段结果和待办。
 
@@ -206,7 +223,7 @@ python -m agy_observer.demo --council --state-dir ./state --port 8766 --open
 | 场景 | 工具 | 用途 |
 | --- | --- | --- |
 | 检查配置 | `agy_info` | 查看版本、开关、模型和限额 |
-| 单次问答 | `agy_run` | 发起一次模型请求 |
+| 单次问答 | `agy_run` | 发起一次请求，可指定 participant、channel、model |
 | 查历史与状态 | `agy_history`、`agy_status` | 列出摘要，或读取某次完整问答和终态 |
 | 取消调用 | `agy_cancel` | 请求取消本实例管理的活动调用 |
 | 建立三方任务 | `agy_council_create` | 保存目标、材料和各自尝试预算 |
@@ -290,6 +307,7 @@ python -m unittest discover -s tests -v
 
 | 文档 | 阅读内容 |
 | --- | --- |
+| [多渠道接入](docs/channels.md) | 参与者、Antigravity/Claude Code/Codex渠道、模型及使用示例 |
 | [配置参考](docs/configuration.md) | 环境变量、模型选择、WSL、等待时间、升级和故障排查 |
 | [项目理解与动态分工](docs/project-workflow.md) | 项目简报、选角、角色提示词与阶段切换的完整示例 |
 | [三方协作机制](docs/council.md) | 三方工具参数、初判、引用、共同草案、上下文与预算 |
