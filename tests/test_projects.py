@@ -253,10 +253,10 @@ class PersistentProjectsTests(unittest.TestCase):
     def test_corrupted_page_is_rejected(self):
         self.reveal()
         self.link()
-        head = json.loads(self.store.file(self.id).read_text())
+        head = json.loads(self.store.file(self.id).read_text(encoding="utf-8"))
         digest = head["archive"]["groups"]["messages"][0]["sha256"]
         path = self.store.file(self.id).with_suffix(".pages") / (digest + ".json")
-        path.write_text("[]")
+        path.write_text("[]", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "digest"):
             self.council.read(self.id)
 
@@ -266,9 +266,9 @@ class PersistentProjectsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already linked"):
             self.projects.link("other", self.id, 1, "cannot rebind")
         path = self.store.file(self.id)
-        head = json.loads(path.read_text())
+        head = json.loads(path.read_text(encoding="utf-8"))
         head["project_continuous"] = False
-        path.write_text(json.dumps(head))
+        path.write_text(json.dumps(head), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "policy"):
             self.council.read(self.id)
 
