@@ -43,3 +43,7 @@ CLI模型不能自行调用此MCP，客户端仍负责调度话轮。`agy_discus
 `<state>/discussions/<id>.json` 与 `<state>/runs/<id>/` 都保存明文私有材料，不上传GitHub。HTTP仍仅loopback只读，不提供执行/写入端点。客户端提交身份未经认证，职责提示不是强制权限隔离。
 
 离线演示标为模拟，真实双方交流记录仅留本地。归档不代表共识、代码完成或验证通过。
+
+## 持续任务记忆
+
+0.8.1开始，双方任务同样支持 `agy_discussion_memory` 与 `agy_discussion_extend`。观点来源使用 lead/reviewer，预算键使用 reviewer。后续请求完整携带当前任务记忆及远端上一条成功发言，近期消息和问题仍有界。详见[任务记忆与继续讨论](task-memory.md)。

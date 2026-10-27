@@ -15,6 +15,7 @@ from .discussions import DIALOGUE_STYLE, checked, clipped, peer_envelope, units
 from .runtime import utc
 from . import project as projects
 from .channels import Endpoint, LABELS
+from .task_state import attach, limits, CONTEXT_LIMIT
 
 PEERS = {"gpt", "gemini", "claude"}
 REMOTE = {"gemini", "claude"}
@@ -122,15 +123,15 @@ def validate(data):
         or type(data.get("plan_version")) is not int
         or data["plan_version"] < 0
         or type(data.get("max_turns_per_model")) is not int
-        or not 1 <= data["max_turns_per_model"] <= 8
+        or not 1 <= data["max_turns_per_model"] <= 32
         or not isinstance(data.get("attempts"), dict)
         or set(data["attempts"]) != remotes
         or any(
-            type(n) is not int or not 0 <= n <= data["max_turns_per_model"]
-            for n in data["attempts"].values()
+            type(n) is not int or not 0 <= n <= limits(data)[p] for p, n in data["attempts"].items()
         )
         or data.get("model_attempts") != sum(data["attempts"].values())
-        or data.get("max_model_turns") != len(remotes) * data["max_turns_per_model"]
+        or data.get("max_model_turns") != sum(limits(data).values())
+        or data["max_turns_per_model"] != max(limits(data).values())
     ):
         raise ValueError("Invalid council document")
     for i, m in enumerate(data["messages"], 1):
@@ -206,9 +207,7 @@ def public(data):
         and all(state == "success" for state in result["initial_status"].values())
         and not any(m["state"] == "running" for m in result["messages"])
     )
-    result["budget_exhausted"] = all(
-        n >= result["max_turns_per_model"] for n in result["attempts"].values()
-    )
+    result["budget_exhausted"] = all(n >= limits(result)[p] for p, n in result["attempts"].items())
     if "project" in result:
         result["workflow_stage"] = projects.stage(result)
         result["role_version"] = projects.version(result)
@@ -319,7 +318,7 @@ class Council:
 
     def writable(self, data, count=1):
         self.store.writable(data)
-        if len(data["messages"]) + count > 40:
+        if len(data["messages"]) + count > 160:
             raise ValueError("Discussion message limit reached")
         if any(m["state"] == "running" for m in data["messages"]):
             raise ValueError("A council batch is pending; wait or recover terminal runs")
@@ -513,6 +512,8 @@ class Council:
                     "如有分歧请指出具体差别及可核对办法；可以建议角色，尚未开始按角色执行。"
                     "不把客户端整理的理解当成全员认可。references记录你回应的发言。"
                 )
+        if not collecting:
+            attach(data, material, manifest, participant)
         if project:
             manifest.update(
                 role_version=projects.version(data), workflow_stage=projects.stage(data)
@@ -532,8 +533,10 @@ class Council:
             "不要使用代码围栏；message只写自然发言，不要把JSON对象再塞进message。正文引用词语优先使用中文引号。\n"
             + json.dumps(material, ensure_ascii=False)
         )
-        if units(prompt) > 16000:
-            raise ValueError("Council context exceeds prompt limit; narrow the supplied materials")
+        if units(prompt) > CONTEXT_LIMIT:
+            raise ValueError(
+                "Council context exceeds 32000 UTF-16 units; narrow task memory or supplied materials"
+            )
         return prompt, manifest
 
     def reserve(self, identifier, participants, focus="", reply_to=None):
@@ -555,7 +558,7 @@ class Council:
             if data["phase"] == "collect" and (focus or reply_to is not None):
                 raise ValueError("Initial prompts cannot contain a leading focus or peer reference")
             for p in participants:
-                if data["attempts"][p] >= data["max_turns_per_model"]:
+                if data["attempts"][p] >= limits(data)[p]:
                     raise ValueError(f"{p} budget exhausted; no automatic extension")
                 if data["phase"] == "collect" and any(
                     m["author"] == p and m["kind"] == "initial" and m["state"] == "success"

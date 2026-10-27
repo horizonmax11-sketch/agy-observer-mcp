@@ -77,11 +77,43 @@ def create_server(settings=None):
         annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
     )
     def agy_discussion_read(discussion_id: str | None = None, limit: int = 20) -> dict | list[dict]:
-        """List task summaries when discussion_id is omitted; otherwise read roles, attributed messages, decisions, context manifests and linked runs. No model call."""
+        """List task summaries when discussion_id is omitted; otherwise read roles, attributed messages, decisions, memory_versions, budget_versions, context manifests and linked runs. Memory/budget expected version is the history length (0 initially). No model call."""
         return (
             public(service.discussions.read(discussion_id))
             if discussion_id
             else service.discussions.list(limit)
+        )
+
+    @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+    )
+    def agy_discussion_memory(
+        discussion_id: str,
+        memory: dict,
+        expected_memory_version: int,
+        reason: str,
+    ) -> dict:
+        """Replace the client-maintained working memory with a versioned snapshot, not inferred consensus. No model call. Read first; expected version is 0 initially. memory has facts/disagreements/next_steps lists of {text,sources:[message ids]}, and positions list of {participant,view,reason,sources}. Each source must be a successful message; each position needs that participant's own source. At most 8 rows/section and 4500 UTF-16 units total. Keep disagreements and reasons, never invent verification. Full snapshot and current plan enter later discussion prompts; initial judgments stay isolated. Pending/closed tasks reject edits."""
+        from .task_state import TaskState
+
+        return TaskState(service.discussions).memory(
+            discussion_id, memory, expected_memory_version, reason
+        )
+
+    @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+    )
+    def agy_discussion_extend(
+        discussion_id: str,
+        additions: dict[str, int],
+        expected_budget_version: int,
+        reason: str,
+    ) -> dict:
+        """Explicitly add 1..8 attempts to selected task remotes, at most 32 total per remote. Council keys are selected gemini/claude/codex; peer tasks use reviewer. Read first; expected version is 0 initially. Records before/after limits and reason; preserves spent attempts, roles, routes, memory and plan versions. Does not call/retry models, reopen archived tasks or start a loop. Failure/cancellation still consumes an attempt. Pending calls block changes; initial budget defaults stay unchanged."""
+        from .task_state import TaskState
+
+        return TaskState(service.discussions).extend(
+            discussion_id, additions, expected_budget_version, reason
         )
 
     @app.tool(
@@ -136,7 +168,7 @@ def create_server(settings=None):
         participants: list[str] | None = None,
         routes: dict[str, dict[str, str]] | None = None,
     ) -> dict:
-        """Create a task with 2..4 selected participants including client gpt; defaults remain gpt/gemini/claude. Optional codex is an independent Codex CLI participant. routes maps each remote participant to {channel, model}; Claude requires Opus. Snapshots prevent implicit route/model changes. Each remote has 1..8 attempts. Prefer project for new projects: client first READS relevant files/docs, supplies stage/materials (source + observed contents)/success_criteria/constraints/unknowns, total <=3000 UTF-16 units. Collect all selected project understandings, reveal, then select roles with agy_council_assign_roles. Do not also preassign roles. Without project, legacy roles map remains supported. No model call or arbitrary project file reading."""
+        """Create a task with 2..4 selected participants including client gpt; defaults remain gpt/gemini/claude. Optional codex is an independent Codex CLI participant. routes maps each remote participant to {channel, model}; Claude requires Opus. Snapshots prevent implicit route/model changes. Each remote starts with 1..8 attempts (default 2, including initial judgment); agy_discussion_extend can explicitly add more without a model call. Prefer project for new projects: client first READS relevant files/docs, supplies stage/materials (source + observed contents)/success_criteria/constraints/unknowns, total <=3000 UTF-16 units. Collect all selected project understandings, reveal, then select roles with agy_council_assign_roles. Do not also preassign roles. Without project, legacy roles map remains supported. No model call or arbitrary project file reading."""
         return service.create_council(
             goal,
             facts,
@@ -210,7 +242,7 @@ def create_server(settings=None):
         focus: str = "",
         reply_to: int | None = None,
     ) -> dict:
-        """Explicitly call up to two selected remote participants via their stored channels (default first two task remotes). No call is made for client gpt. Codex CLI may be selected independently. Separate attempt budgets; no retries/loop. Collect uses only original material, disallows leading focus, and keeps replies sealed. Later batch shares a pre-call snapshot. May incur cost; CLI tools are not forcibly disabled."""
+        """Explicitly call up to two selected remote participants via their stored channels (default first two task remotes). No call is made for client gpt. Codex CLI may be selected independently. Separate attempt budgets; no retries/loop. Collect uses only original material, disallows leading focus, and keeps replies sealed. Later batch shares a pre-call snapshot with full current plan, current task memory and each participant's own last successful contribution. Recent history/questions remain bounded; consult context manifests. May incur cost; CLI tools are not forcibly disabled."""
         return await service.council_round(discussion_id, participants, focus, reply_to)
 
     @app.tool(

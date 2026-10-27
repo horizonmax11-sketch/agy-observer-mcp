@@ -5,7 +5,7 @@ args = ["-m", "agy_observer.server"]
 startup_timeout_sec = 30
 # Covers the configurable 210s outer limit plus process cleanup and protocol overhead.
 tool_timeout_sec = 240
-enabled_tools = ["agy_info", "agy_history", "agy_status", "agy_run", "agy_cancel", "agy_discussion_create", "agy_discussion_read", "agy_discussion_note", "agy_discussion_turn", "agy_discussion_recover", "agy_council_create", "agy_council_note", "agy_council_round", "agy_council_reveal", "agy_council_assign_roles"]
+enabled_tools = ["agy_info", "agy_history", "agy_status", "agy_run", "agy_cancel", "agy_discussion_create", "agy_discussion_read", "agy_discussion_note", "agy_discussion_turn", "agy_discussion_recover", "agy_council_create", "agy_council_note", "agy_council_round", "agy_council_reveal", "agy_council_assign_roles", "agy_discussion_memory", "agy_discussion_extend"]
 default_tools_approval_mode = "prompt"
 
 [mcp_servers.agy_observer.env]

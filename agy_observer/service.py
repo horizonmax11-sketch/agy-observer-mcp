@@ -149,13 +149,14 @@ class Service:
             )
         if self.batch_task is not None and _batch_token is not self._batch_token:
             raise ValueError("Wait for the active batch before starting another call")
+        prompt_limit = 32000 if discussion or council else 16000
         if (
             not isinstance(prompt, str)
             or not prompt.strip()
             or "\x00" in prompt
-            or len(prompt.encode("utf-16-le")) // 2 > 16000
+            or len(prompt.encode("utf-16-le")) // 2 > prompt_limit
         ):
-            raise ValueError("Prompt must contain 1..16000 UTF-16 units and no NUL")
+            raise ValueError(f"Prompt must contain 1..{prompt_limit} UTF-16 units and no NUL")
         if self.settings.workspace is None or not self.settings.workspace.is_dir():
             raise ValueError("Configure AGY_OBSERVER_WORKSPACE as an existing directory")
         if self.active and not parallel:

@@ -45,7 +45,7 @@ dl{display:grid;grid-template-columns:90px 1fr;gap:4px 16px}dt{color:#a6b3c3}dd{
   <div id="runs"></div><div id="sessions" hidden></div>
  </nav>
  <article>
- <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><div id="project-context"></div><details><summary id="role-heading">参与方式</summary><dl id="roles"></dl><p class="muted">关注重点可以跨越，不限制补充和质疑。模型名称取自请求记录，GPT 发言由客户端提交。每条发言的“依据与记录”保留完整型号、来源和上下文。</p></details><p class="muted" id="discussion-help">每轮由客户端发起。</p><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
+ <section id="discussion" hidden><span class="badge" id="discussion-state"></span><h2 id="goal"></h2><div id="project-context"></div><details><summary id="role-heading">参与方式</summary><dl id="roles"></dl><p class="muted">关注重点可以跨越，不限制补充和质疑。模型名称取自请求记录，GPT 发言由客户端提交。每条发言的“依据与记录”保留完整型号、来源和上下文。</p></details><p class="muted" id="discussion-help">每轮由客户端发起。</p><div id="task-memory"></div><div id="shared-plan"></div><div id="questions"></div><div id="messages"></div></section>
  <section id="single">
   <div><span id="state" class="badge">暂无记录</span><span id="kind"></span></div>
   <h2>用户</h2><pre id="task">暂无可见的对话记录。</pre>
@@ -151,16 +151,22 @@ function fillDiscussion(data){
  fillProject(data,who);
  txt('role-heading',data.project?(data.role_version?'本阶段分工 · v'+data.role_version:'项目分工（待共同选择）'):council?'项目分工'+(data.phase==='collect'?'（首轮公开后启用）':''):'参与方式');
  txt('discussion-help',isTest(data)?'离线演示：这里都是示例内容，没有调用模型。':council?'先各自想一想，再一起把方案改好。有不同看法可以直接提出，也可以补充信息或调整想法。':`${who('lead')} 与 ${who('reviewer')} 一起讨论。${peer?'可以接着聊、问问题，也可以换个角度看看。':''}`);
- txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · '+Object.entries(data.attempts).map(([p,n])=>who(p)+' '+n+'/'+data.max_turns_per_model).join(' · '):''}`);
+ txt('goal',data.goal);txt('discussion-state',`${data.kind} · ${data.closed?'已归档':council&&data.phase==='collect'?'首轮封存中':'讨论中'} · 模型尝试 ${data.model_attempts}/${data.max_model_turns}${council?' · '+Object.entries(data.attempts).map(([p,n])=>who(p)+' '+n+'/'+(data.budget_limits?.[p]??data.max_turns_per_model)).join(' · '):''}`);
  el('roles').replaceChildren();
  for(const [role,brief] of Object.entries(data.roles)){
   const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=who(role);dd.textContent=brief;el('roles').append(dt,dd);
  }
+ const memoryRoot=el('task-memory');memoryRoot.replaceChildren();
+ const memories=data.memory_versions||[],memory=memories.at(-1),grants=data.budget_versions||[];
+ const mh=document.createElement('h2'),mn=document.createElement('p');mh.textContent='任务记忆'+(memory?' · v'+memory.version:'（尚未整理）');mn.className='muted';mn.textContent='由客户端结合来源整理，保留事实、不同意见和理由；不自动代表全员认可。后续请求完整携带当前记忆和方案，其他历史仍可能省略。';memoryRoot.append(mh,mn);
+ if(memory){for(const [key,label] of [['facts','事实记录'],['disagreements','尚有分歧'],['positions','各方观点与理由'],['next_steps','接下来要做']]){const h=document.createElement('h3');h.textContent=label;memoryRoot.append(h);for(const row of memory.memory[key]){const p=document.createElement('p');p.textContent=(key==='positions'?who(row.participant)+'：'+row.view+'；理由：'+row.reason:row.text)+' （来源 '+row.sources.map(i=>'#'+i).join('、')+'）';memoryRoot.append(p)}}
+ const details=document.createElement('details'),summary=document.createElement('summary'),body=document.createElement('pre');summary.textContent='记忆修改记录（'+memories.length+'版）';body.textContent=memories.map(v=>'v'+v.version+' · '+v.time_utc+' · '+v.reason+' · 基于 #1–#'+v.through_message_id).join('\n');details.append(summary,body);memoryRoot.append(details)}
+ if(grants.length){const details=document.createElement('details'),summary=document.createElement('summary'),body=document.createElement('pre');summary.textContent='追加预算记录（'+grants.length+'次）';body.textContent=grants.map(v=>'v'+v.version+' · '+v.reason+' · '+Object.entries(v.after).map(([p,n])=>who(p)+' '+v.before[p]+' → '+n).join('；')).join('\n');details.append(summary,body);memoryRoot.append(details)}
  el('shared-plan').replaceChildren();
  const plan=council?[...data.messages].reverse().find(m=>m.kind==='plan'):null;
  if(plan){const title=document.createElement('h2'),body=document.createElement('pre'),note=document.createElement('p');title.textContent='当前方案草案 · v'+plan.plan_version;body.textContent=plan.content;note.className='muted';note.textContent='整理自 '+(plan.references||[]).map(i=>'#'+i).join('、')+'，各方的具体意见见下方。';el('shared-plan').append(title,body,note)}
  if(council&&data.phase==='collect'){const p=document.createElement('p');p.textContent='初判收集：'+Object.entries(data.initial_status||{}).map(([author,state])=>who(author)+' '+(states[state]||({missing:'尚未提交',interrupted:'已中断'}[state]||state))).join('；')+'。'+(data.reveal_ready?'已收齐，等待客户端显式公开。':'三份初判成功后才可公开；超时不视为收齐。')+'封存不限制本机操作者访问运行文件。';el('shared-plan').append(p)}
- if(council&&data.budget_exhausted){const p=document.createElement('p');p.className='muted';p.textContent='本轮模型调用已用完，接下来可以整理结果和还没解决的问题。';el('shared-plan').append(p)}
+ if(council&&data.budget_exhausted){const p=document.createElement('p');p.className='muted';p.textContent='当前模型调用预算已用完。可先整理记忆和分歧，再由客户端显式追加预算；不会自动续费式调用或重试。';el('shared-plan').append(p)}
  el('questions').replaceChildren();
  const pending=data.open_questions||[];
  if(pending.length){

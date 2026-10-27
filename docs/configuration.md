@@ -30,7 +30,7 @@ WSL的窗口打开会尝试系统浏览器，再尝试Windows PowerShell的普�
 
 较慢的模型可显式设置 `AGY_OBSERVER_CLI_TIMEOUT=120`、`AGY_OBSERVER_OUTER_TIMEOUT=150`。更长等待可能增加单次费用，不会增加任务次数预算或启用自动重试。超时记录保持原状；调整配置只影响后续显式调用。双流各 2 MiB 限额保持不变。
 
-客户端自己的工具超时也需覆盖外层等待及进程清理，否则客户端会先中断。附带的 Codex 示例设为 `tool_timeout_sec=240`，并列出全部15个工具，包含动态分工的 `agy_council_assign_roles`；其他客户端按其配置方式调整。客户端等待时间不会放宽服务端的180/210秒上限。
+客户端自己的工具超时也需覆盖外层等待及进程清理，否则客户端会先中断。附带的 Codex 示例设为 `tool_timeout_sec=240`，并列出全部17个工具，包含动态分工的 `agy_council_assign_roles` 及 `agy_discussion_memory`、`agy_discussion_extend`；其他客户端按其配置方式调整。客户端等待时间不会放宽服务端的180/210秒上限。
 
 ## 升级与异常恢复
 
@@ -52,3 +52,5 @@ WSL的窗口打开会尝试系统浏览器，再尝试Windows PowerShell的普�
 - 超时或失败：用 `agy_status(run_id)` 查看终态与警告；服务不会自动重试。
 
 CLI 子进程使用参数列表启动，不经过 shell。提示会作为 CLI 参数传递，本机同用户进程可能看到命令行。更多边界见 [SECURITY.md](../SECURITY.md)。
+
+0.8.1的记忆与预算工具是本地写入操作，沿用客户端审批，不请求模型。旧任务默认预算不变。若设置了工具白名单，请补入两个新工具并重新打开会话；[详细用法](task-memory.md)。

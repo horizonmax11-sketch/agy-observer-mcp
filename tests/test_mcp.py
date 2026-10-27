@@ -73,6 +73,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                                 "agy_council_round",
                                 "agy_council_reveal",
                                 "agy_council_assign_roles",
+                                "agy_discussion_memory",
+                                "agy_discussion_extend",
                             ]
                         ),
                     )
@@ -101,6 +103,33 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         },
                     )
                     self.assertFalse(note.isError)
+                    memory = await session.call_tool(
+                        "agy_discussion_memory",
+                        {
+                            "discussion_id": identifier,
+                            "expected_memory_version": 0,
+                            "reason": "preserve supplied material",
+                            "memory": {
+                                "facts": [{"text": "synthetic proposal", "sources": [1]}],
+                                "disagreements": [],
+                                "positions": [],
+                                "next_steps": [],
+                            },
+                        },
+                    )
+                    self.assertFalse(memory.isError)
+                    self.assertEqual(json.loads(memory.content[0].text)["version"], 1)
+                    grant = await session.call_tool(
+                        "agy_discussion_extend",
+                        {
+                            "discussion_id": identifier,
+                            "expected_budget_version": 0,
+                            "reason": "explicit extra attempt",
+                            "additions": {"reviewer": 1},
+                        },
+                    )
+                    self.assertFalse(grant.isError)
+                    self.assertEqual(json.loads(grant.content[0].text)["after"], {"reviewer": 5})
                     denied = await session.call_tool(
                         "agy_discussion_turn",
                         {"discussion_id": identifier, "instruction": "synthetic review"},
