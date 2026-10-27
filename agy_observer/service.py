@@ -382,7 +382,9 @@ class Service:
         if self.active or self.batch_task is not None:
             raise ValueError("Another model call is active")
         endpoint, _ = self.endpoint(participant, channel, model)
-        message_id, prompt = self.discussions.reserve(discussion_id, instruction, reply_to)
+        message_id, prompt = self.discussions.reserve(
+            discussion_id, instruction, reply_to, participant=participant
+        )
         try:
             result = await self.run(
                 prompt,

@@ -10,11 +10,13 @@ import re
 import shutil
 import sys
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 from .history import History
 from .discussions import Discussions
 from .council import public
+from .archive import page_view
+from .projects import Projects
 
 
 class Monitor:
@@ -58,10 +60,16 @@ class Monitor:
                         ).encode()
                         kind = "application/json; charset=utf-8"
                     elif re.fullmatch(r"/api/discussions/[A-Za-z0-9_-]{1,100}", path):
-                        body = json.dumps(
-                            public(monitor.discussions.read(path.rsplit("/", 1)[-1])),
-                            ensure_ascii=False,
-                        ).encode()
+                        query = parse_qs(urlsplit(self.path).query)
+                        offset = int(query["offset"][0]) if "offset" in query else None
+                        limit = int(query.get("limit", ["100"])[0])
+                        data = page_view(public(monitor.discussions.read(path.rsplit("/", 1)[-1])), offset, limit)
+                        if data.get("project_id"):
+                            data["project_record"] = Projects(monitor.discussions).load(data["project_id"])
+                        body = json.dumps(data, ensure_ascii=False).encode()
+                        kind = "application/json; charset=utf-8"
+                    elif re.fullmatch(r"/api/projects/[A-Za-z0-9_-]{1,100}", path):
+                        body = json.dumps(Projects(monitor.discussions).read(path.rsplit("/", 1)[-1]), ensure_ascii=False).encode()
                         kind = "application/json; charset=utf-8"
                     elif path == "/api/runs":
                         body = json.dumps(

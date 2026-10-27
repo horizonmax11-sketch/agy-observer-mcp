@@ -30,7 +30,7 @@ WSL的窗口打开会尝试系统浏览器，再尝试Windows PowerShell的普�
 
 较慢的模型可显式设置 `AGY_OBSERVER_CLI_TIMEOUT=120`、`AGY_OBSERVER_OUTER_TIMEOUT=150`。更长等待可能增加单次费用，不会增加任务次数预算或启用自动重试。超时记录保持原状；调整配置只影响后续显式调用。双流各 2 MiB 限额保持不变。
 
-客户端自己的工具超时也需覆盖外层等待及进程清理，否则客户端会先中断。附带的 Codex 示例设为 `tool_timeout_sec=240`，并列出全部17个工具，包含动态分工的 `agy_council_assign_roles` 及 `agy_discussion_memory`、`agy_discussion_extend`；其他客户端按其配置方式调整。客户端等待时间不会放宽服务端的180/210秒上限。
+客户端自己的工具超时也需覆盖外层等待及进程清理，否则客户端会先中断。附带的 Codex 示例设为 `tool_timeout_sec=240`，并列出全部20个工具，包括持续项目的 `agy_project_read`、`agy_project_update`、`agy_project_link`，以及动态分工的 `agy_council_assign_roles` 及 `agy_discussion_memory`、`agy_discussion_extend`；其他客户端按其配置方式调整。客户端等待时间不会放宽服务端的180/210秒上限。
 
 ## 升级与异常恢复
 

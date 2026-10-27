@@ -16,6 +16,7 @@ from .runtime import utc
 from . import project as projects
 from .channels import Endpoint, LABELS
 from .task_state import attach, limits, CONTEXT_LIMIT
+from .projects import Projects, continuous
 
 PEERS = {"gpt", "gemini", "claude"}
 REMOTE = {"gemini", "claude"}
@@ -127,7 +128,8 @@ def validate(data):
         or not isinstance(data.get("attempts"), dict)
         or set(data["attempts"]) != remotes
         or any(
-            type(n) is not int or not 0 <= n <= limits(data)[p] for p, n in data["attempts"].items()
+            type(n) is not int or n < 0 or (not continuous(data) and n > limits(data)[p])
+            for p, n in data["attempts"].items()
         )
         or data.get("model_attempts") != sum(data["attempts"].values())
         or data.get("max_model_turns") != sum(limits(data).values())
@@ -207,7 +209,9 @@ def public(data):
         and all(state == "success" for state in result["initial_status"].values())
         and not any(m["state"] == "running" for m in result["messages"])
     )
-    result["budget_exhausted"] = all(n >= limits(result)[p] for p, n in result["attempts"].items())
+    result["budget_exhausted"] = not continuous(result) and all(
+        n >= limits(result)[p] for p, n in result["attempts"].items()
+    )
     if "project" in result:
         result["workflow_stage"] = projects.stage(result)
         result["role_version"] = projects.version(result)
@@ -318,7 +322,7 @@ class Council:
 
     def writable(self, data, count=1):
         self.store.writable(data)
-        if len(data["messages"]) + count > 160:
+        if not continuous(data) and len(data["messages"]) + count > 160:
             raise ValueError("Discussion message limit reached")
         if any(m["state"] == "running" for m in data["messages"]):
             raise ValueError("A council batch is pending; wait or recover terminal runs")
@@ -520,6 +524,7 @@ class Council:
             )
             if not collecting:
                 material["context"] = manifest
+        Projects(self.store).inject(data, material, manifest, participant, collecting)
         prompt = (
             "你是一起解决问题的协作参与者，大家有平等的发言权。"
             + instruction
@@ -558,7 +563,7 @@ class Council:
             if data["phase"] == "collect" and (focus or reply_to is not None):
                 raise ValueError("Initial prompts cannot contain a leading focus or peer reference")
             for p in participants:
-                if data["attempts"][p] >= limits(data)[p]:
+                if not continuous(data) and data["attempts"][p] >= limits(data)[p]:
                     raise ValueError(f"{p} budget exhausted; no automatic extension")
                 if data["phase"] == "collect" and any(
                     m["author"] == p and m["kind"] == "initial" and m["state"] == "success"

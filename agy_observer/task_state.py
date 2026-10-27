@@ -85,7 +85,9 @@ def validate(data):
     if data.get("protocol") == "council-v1" and not isinstance(data.get("models"), dict):
         raise ValueError("Invalid council models")
     memories = data.get("memory_versions", [])
-    if not isinstance(memories, list) or len(memories) > VERSION_LIMIT:
+    if not isinstance(memories, list) or (
+        not data.get("project_id") and len(memories) > VERSION_LIMIT
+    ):
         raise ValueError("Invalid memory history")
     previous = 0
     for index, entry in enumerate(memories, 1):
@@ -164,7 +166,7 @@ class TaskState:
             raise ValueError("A model call is pending; wait or recover before updating task state")
         if type(expected) is not int or expected != version(data, key):
             raise ValueError(f"{key} version changed; read before updating")
-        if expected >= VERSION_LIMIT:
+        if not data.get("project_id") and expected >= VERSION_LIMIT:
             raise ValueError(f"{key} history limit reached")
 
     def memory(self, identifier, spec, expected, reason):
@@ -194,6 +196,12 @@ class TaskState:
         with self.store.writing():
             data = self.store.read(identifier)
             self.writable(data, "budget", expected)
+            from .projects import continuous
+
+            if continuous(data):
+                raise ValueError(
+                    "This project discussion is on demand; no additional round budget is needed"
+                )
             before = limits(data)
             if (
                 not isinstance(additions, dict)

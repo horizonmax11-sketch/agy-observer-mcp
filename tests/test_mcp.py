@@ -75,6 +75,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                                 "agy_council_assign_roles",
                                 "agy_discussion_memory",
                                 "agy_discussion_extend",
+                                "agy_project_read",
+                                "agy_project_update",
+                                "agy_project_link",
                             ]
                         ),
                     )
@@ -139,6 +142,35 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         "agy_discussion_read", {"discussion_id": identifier}
                     )
                     self.assertEqual(json.loads(loaded.content[0].text)["model_attempts"], 0)
+                    opened = await session.call_tool(
+                        "agy_project_update",
+                        {
+                            "project_id": "synthetic-project",
+                            "expected_version": 0,
+                            "name": "Synthetic long-lived project",
+                            "goal": "Finish verified work",
+                            "reason": "create project without model calls",
+                        },
+                    )
+                    self.assertFalse(opened.isError)
+                    linked = await session.call_tool(
+                        "agy_project_link",
+                        {
+                            "project_id": "synthetic-project",
+                            "discussion_id": identifier,
+                            "expected_version": 1,
+                            "reason": "explicit on-demand collaboration",
+                        },
+                    )
+                    self.assertFalse(linked.isError)
+                    project = await session.call_tool(
+                        "agy_project_read",
+                        {"project_id": "synthetic-project", "sources": [identifier + "#1"]},
+                    )
+                    self.assertFalse(project.isError)
+                    project_data = json.loads(project.content[0].text)
+                    self.assertEqual(project_data["lifetime_attempts"], 0)
+                    self.assertEqual(project_data["sources"][0]["message"]["source"], "client")
                     from tests.test_project import PROFILE, ROLES
 
                     created = await session.call_tool(

@@ -83,7 +83,7 @@ def validate(data):
         raise ValueError("Invalid project workflow")
     brief(project["brief"])
     versions = project["role_versions"]
-    if not isinstance(versions, list) or len(versions) > 8:
+    if not isinstance(versions, list) or (not data.get("project_id") and len(versions) > 8):
         raise ValueError("Invalid role history")
     previous_id = 0
     for index, entry in enumerate(versions, 1):
@@ -159,7 +159,7 @@ class ProjectWorkflow:
             old_version = version(data)
             if type(expected_version) is not int or expected_version != old_version:
                 raise ValueError("Role version changed; read before revising")
-            if old_version >= 8:
+            if not data.get("project_id") and old_version >= 8:
                 raise ValueError("Role revision limit reached")
             # Reuse the council's earlier-message validation without circular imports.
             from .council import refs

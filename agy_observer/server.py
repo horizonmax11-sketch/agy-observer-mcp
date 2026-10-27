@@ -76,12 +76,90 @@ def create_server(settings=None):
     @app.tool(
         annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
     )
-    def agy_discussion_read(discussion_id: str | None = None, limit: int = 20) -> dict | list[dict]:
+    def agy_discussion_read(
+        discussion_id: str | None = None,
+        limit: int = 20,
+        message_offset: int | None = None,
+        message_limit: int = 100,
+    ) -> dict | list[dict]:
         """List task summaries when discussion_id is omitted; otherwise read roles, attributed messages, decisions, memory_versions, budget_versions, context manifests and linked runs. Memory/budget expected version is the history length (0 initially). No model call."""
-        return (
-            public(service.discussions.read(discussion_id))
-            if discussion_id
-            else service.discussions.list(limit)
+        from .archive import page_view
+
+        if discussion_id:
+            return page_view(
+                public(service.discussions.read(discussion_id)), message_offset, message_limit
+            )
+        return service.discussions.list(limit)
+
+    @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
+    )
+    def agy_project_read(
+        project_id: str | None = None,
+        version: int | None = None,
+        query: str = "",
+        sources: list[str] | None = None,
+        limit: int = 20,
+        participant: str | None = None,
+    ) -> dict | list[dict]:
+        """Read durable project memory, full current plan, independent participant views and lifetime usage across linked discussions. Omit project_id to list local projects. version reads a previous checkpoint; query searches bounded public excerpts; sources retrieves 1..12 exact discussion_id#message_id originals. No model call; sealed initial judgments are not exposed. Discussion history has separate message pagination. Provider sessions are not resumed or authenticated by this memory layer."""
+        from .projects import Projects
+
+        return Projects(service.discussions).read(
+            project_id,
+            version=version,
+            query=query,
+            sources=sources,
+            limit=limit,
+            participant=participant,
+        )
+
+    @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+    )
+    def agy_project_update(
+        project_id: str,
+        expected_version: int,
+        reason: str,
+        name: str | None = None,
+        goal: str | None = None,
+        memory: dict | None = None,
+        plan: str | None = None,
+        plan_sources: list[str] | None = None,
+        status: str | None = None,
+        capture_discussion_id: str | None = None,
+    ) -> dict:
+        """Create/update a lasting project checkpoint. Create with expected_version=0, name and goal; otherwise read current version first. memory uses facts/disagreements/next_steps {text,sources} and positions {participant,view,reason,sources}, with project-qualified source strings discussion_id#message_id (successful, revealed, linked messages). Whole memory <=4500 UTF-16 units; plan <=4000 and needs plan_sources. Empty plan explicitly clears it. status=active/paused/completed controls project lifecycle; pausing blocks NEW calls, does not cancel active ones. Completed projects need explicit active update to resume. Checkpoints have no round/version-count expiry. capture_discussion_id retries local synchronization of an already linked task, never models. No automatic retries, model calls or credential migration."""
+        from .projects import Projects
+
+        return Projects(service.discussions).update(
+            project_id,
+            expected_version,
+            reason,
+            name=name,
+            goal=goal,
+            memory=memory,
+            plan=plan,
+            plan_sources=plan_sources,
+            status=status,
+            capture_discussion_id=capture_discussion_id,
+        )
+
+    @app.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+    )
+    def agy_project_link(
+        project_id: str,
+        discussion_id: str,
+        expected_version: int,
+        reason: str,
+        on_demand: bool = True,
+    ) -> dict:
+        """Explicitly link a local discussion to one lasting project. Binding is immutable and cannot cross another project. Default on_demand=true authorizes individually requested turns without a fixed lifetime round budget; it does not start any turn/loop or bypass client approvals, CLI limits or cancellation. Existing spent attempts remain usage records. on_demand=false retains that task's old budget. Save exact legacy snapshot before paging. Local client memory/plan updates are checkpointed into the project; model views retain actual provenance. Create a new normal discussion and link it to reuse the project across topics/sessions; archived discussions stay archived. No model call."""
+        from .projects import Projects
+
+        return Projects(service.discussions).link(
+            project_id, discussion_id, expected_version, reason, on_demand
         )
 
     @app.tool(
@@ -93,7 +171,7 @@ def create_server(settings=None):
         expected_memory_version: int,
         reason: str,
     ) -> dict:
-        """Replace the client-maintained working memory with a versioned snapshot, not inferred consensus. No model call. Read first; expected version is 0 initially. memory has facts/disagreements/next_steps lists of {text,sources:[message ids]}, and positions list of {participant,view,reason,sources}. Each source must be a successful message; each position needs that participant's own source. At most 8 rows/section and 4500 UTF-16 units total. Keep disagreements and reasons, never invent verification. Full snapshot and current plan enter later discussion prompts; initial judgments stay isolated. Pending/closed tasks reject edits."""
+        """Replace the client-maintained working memory with a versioned snapshot, not inferred consensus. No model call. Read first; expected version is 0 initially. Linked project discussions also checkpoint this memory into their persistent project. memory has facts/disagreements/next_steps lists of {text,sources:[message ids]}, and positions list of {participant,view,reason,sources}. Each source must be a successful message; each position needs that participant's own source. At most 8 rows/section and 4500 UTF-16 units total. Keep disagreements and reasons, never invent verification. Full snapshot and current plan enter later discussion prompts; initial judgments stay isolated. Pending/closed tasks reject edits."""
         from .task_state import TaskState
 
         return TaskState(service.discussions).memory(
@@ -168,7 +246,7 @@ def create_server(settings=None):
         participants: list[str] | None = None,
         routes: dict[str, dict[str, str]] | None = None,
     ) -> dict:
-        """Create a task with 2..4 selected participants including client gpt; defaults remain gpt/gemini/claude. Optional codex is an independent Codex CLI participant. routes maps each remote participant to {channel, model}; Claude requires Opus. Snapshots prevent implicit route/model changes. Each remote starts with 1..8 attempts (default 2, including initial judgment); agy_discussion_extend can explicitly add more without a model call. Prefer project for new projects: client first READS relevant files/docs, supplies stage/materials (source + observed contents)/success_criteria/constraints/unknowns, total <=3000 UTF-16 units. Collect all selected project understandings, reveal, then select roles with agy_council_assign_roles. Do not also preassign roles. Without project, legacy roles map remains supported. No model call or arbitrary project file reading."""
+        """Create a task with 2..4 selected participants including client gpt; defaults remain gpt/gemini/claude. Optional codex is an independent Codex CLI participant. routes maps each remote participant to {channel, model}; Claude requires Opus. Snapshots prevent implicit route/model changes. Unlinked tasks start with 1..8 attempts per remote (default 2, including initial judgment); explicitly link a lasting project with agy_project_link for on-demand collaboration without a lifetime round cap; agy_discussion_extend can explicitly add more without a model call. Prefer project for new projects: client first READS relevant files/docs, supplies stage/materials (source + observed contents)/success_criteria/constraints/unknowns, total <=3000 UTF-16 units. Collect all selected project understandings, reveal, then select roles with agy_council_assign_roles. Do not also preassign roles. Without project, legacy roles map remains supported. No model call or arbitrary project file reading."""
         return service.create_council(
             goal,
             facts,
@@ -283,6 +361,8 @@ def create_server(settings=None):
             client_source="gpt",
             authentication_checked=False,
             version=__version__,
+            persistent_projects=True,
+            project_call_policy="explicit on-demand turns; no lifetime round cap after linking",
             execution_enabled=service.settings.enabled,
             model_requested=service.settings.model,
             council_models={

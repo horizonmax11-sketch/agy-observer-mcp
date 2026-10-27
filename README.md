@@ -4,7 +4,7 @@
 
 AGY Observer MCP 支持 Antigravity、官方 Claude Code 和 Codex CLI 三个调用渠道，使用各 CLI 自己的登录。你可以只问一个问题，也可以让当前客户端中的 GPT 与 Gemini、Claude 共同理解项目、选择分工、追问和修改一份方案。提问、回答、讨论依据和方案版本留在本机，方便回看和继续推进。
 
-**当前版本：0.8.1** · [版本记录](CHANGELOG.md) · Apache-2.0
+**当前版本：0.9.0** · [版本记录](CHANGELOG.md) · Apache-2.0
 
 [调用渠道](#调用渠道) · [功能与场景](#功能与场景) · [工作方式](#工作方式) · [安装与演示](#安装与演示) · [连接 MCP](#连接-mcp) · [第一次使用](#第一次使用) · [三方协作](#三方协作怎样开展) · [常见问题](#常见问题) · [文档导航](#文档导航)
 
@@ -88,10 +88,10 @@ python3 -m venv .venv
 .venv/bin/python -m pip install .
 ```
 
-也可以从本仓库 **Releases → v0.8.1 → Assets** 下载 wheel，在下载目录中把上面的安装命令替换为：
+也可以从本仓库 **Releases → v0.9.0 → Assets** 下载 wheel，在下载目录中把上面的安装命令替换为：
 
 ```sh
-python -m pip install ./agy_observer_mcp-0.8.1-py3-none-any.whl
+python -m pip install ./agy_observer_mcp-0.9.0-py3-none-any.whl
 ```
 
 此处 `python` 应替换为刚创建的虚拟环境 Python 路径。发布附件同时提供 `SHA256SUMS`，可核对下载文件。当前文档以 Windows/Linux 为已验证环境，macOS 尚未完成验证。
@@ -216,15 +216,21 @@ python -m agy_observer.demo --council --state-dir ./state --port 8766 --open
 
 完整参数及示例见[项目理解与动态分工](docs/project-workflow.md)和[三方协作机制](docs/council.md)。后者也说明初判封存、引用、上下文截断和评估办法。GPT 来源标签和首轮封存属于协作流程，不是模型身份认证或本机文件访问控制。
 
+## 持续项目：直到实际完成
+
+0.9.0新增独立的项目档案，把共同事实、分歧、当前方案和各模型的观点轨迹跨讨论保存。显式关联项目后，默认按需持续调用；累计次数只记录用量，不因达到某轮就结束项目。暂停、恢复、完成都由明确的项目状态决定，不启动自动循环。
+
+重开客户端或切换话题后，先读取项目，再继续原讨论或关联一场新讨论。模型带着项目基线和自己的公开旧观点继续工作；首轮不塞入其他参与者的旧观点。长讨论分页保存，支持检索和精确引用原文。详见[持续项目指南](docs/persistent-projects.md)。
+
 ## 任务记忆与继续讨论
 
 0.8.1新增持续维护的任务记忆：记录有来源的事实、分歧、各方观点与理由及后续行动。后续讨论完整携带当前记忆、最新方案和被调用者上一条成功发言；其他历史的省略与截断可查。首轮独立判断保持隔离，不自动复用提供方会话。
 
-默认预算保持不变（多方每位2次，初判也计入）；需要继续时可按参与者显式追加，不重置已用次数，不自动请求模型。记忆和预算均有版本检查与修改记录。详见[任务记忆与追加预算](docs/task-memory.md)。
+未关联项目的兼容任务仍保留旧预算（多方每位2次，初判也计入），可按参与者显式追加。需要长期协作时应关联持续项目，按需继续而无需反复追加总轮数。记忆和预算均有版本检查与修改记录。详见[任务记忆与追加预算](docs/task-memory.md)。
 
 ## MCP 工具一览
 
-共 17 个工具，按需使用即可。创建任务、记录笔记、读取历史和恢复记录均不发起模型请求。
+共 20 个工具，按需使用即可。创建任务、记录笔记、读取历史和恢复记录均不发起模型请求。
 
 | 场景 | 工具 | 用途 |
 | --- | --- | --- |
@@ -237,6 +243,7 @@ python -m agy_observer.demo --council --state-dir ./state --port 8766 --open
 | 项目分工 | `agy_council_assign_roles` | 生成角色提示词，按阶段追加分工版本 |
 | 三方话轮 | `agy_council_round` | 向所选外部参与者中的一位或两位发起请求 |
 | 读取与恢复讨论 | `agy_discussion_read`、`agy_discussion_recover` | 查看任务，或核对关联运行并恢复终态；不重发请求 |
+| 持续项目 | `agy_project_read`、`agy_project_update`、`agy_project_link` | 跨讨论记忆、各自观点轨迹、状态和显式项目关联 |
 | 维护任务记忆 | `agy_discussion_memory` | 按来源整理事实、分歧、观点理由和行动项，保留版本 |
 | 追加预算 | `agy_discussion_extend` | 明确给选定外部参与者增加尝试次数；不发起请求 |
 | 双方协作 | `agy_discussion_create`、`agy_discussion_note`、`agy_discussion_turn` | 创建双方任务、记录客户端发言、向配置模型交接话轮 |
@@ -318,6 +325,7 @@ python -m unittest discover -s tests -v
 | [多渠道接入](docs/channels.md) | 参与者、Antigravity/Claude Code/Codex渠道、模型及使用示例 |
 | [配置参考](docs/configuration.md) | 环境变量、模型选择、WSL、等待时间、升级和故障排查 |
 | [项目理解与动态分工](docs/project-workflow.md) | 项目简报、选角、角色提示词与阶段切换的完整示例 |
+| [持续项目指南](docs/persistent-projects.md) | 项目长期记忆、按需调用、暂停恢复、历史分页与检索 |
 | [任务记忆与追加预算](docs/task-memory.md) | 持续上下文、来源、版本、预算与升级方法 |
 | [三方协作机制](docs/council.md) | 三方工具参数、初判、引用、共同草案、上下文与预算 |
 | [双方协作](docs/collaboration.md) | 一位远端模型参与时的提问、回应和话轮交接 |
